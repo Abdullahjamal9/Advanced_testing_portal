@@ -1,0 +1,9 @@
+Standard_List,Short_Name,Total_Questions,Passing_Criteria,hours,minutes,seconds,Negative_Marking
+MPT (General),MPT (General),30,70%,0,45,0,Yes
+MPT (Specific),MPT (Specific),30,70%,0,45,0,Yes
+Penetrant Testing (General),Penetrant Testing (General),30,70%,0,45,0,Yes
+Penetrant Testing (Specific),Penetrant Testing (Specific),30,70%,0,45,0,Yes
+API RP 7G-2,API RP 7G-2,30,70%,0,45,0,Yes
+API SPEC 5CT & 5A5,API SPEC 5CT & 5A5,30,70%,0,45,0,Yes
+DS-1,DS-1,30,70%,0,45,0,Yes
+Cummulative,Cummulative,50,70%,1,0,0,Yes
