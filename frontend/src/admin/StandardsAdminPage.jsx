@@ -3,7 +3,7 @@ import { Edit2, Trash2, BookOpen } from 'lucide-react';
 import { useTheme } from '../contexts/ThemeContext';
 import '../PTIS_App.css';
 
-const StandardsAdminPage = ({ onBack }) => {
+const StandardsAdminPage = ({ onBack, showToast }) => {
   const { theme, isDarkMode, toggleTheme } = useTheme();
   const [standards, setStandards] = useState([]);
   const [infos, setInfos] = useState([]);
@@ -88,7 +88,7 @@ const StandardsAdminPage = ({ onBack }) => {
       setLoading(false);
     } catch (error) {
       console.error('Error fetching data:', error);
-      alert('Failed to load standards data');
+      if (showToast) showToast('Failed to load standards data', 'error');
       setStandards([]);
       setInfos([]);
       setLoading(false);
@@ -152,11 +152,11 @@ const StandardsAdminPage = ({ onBack }) => {
         })
       ]);
       
-      alert('Standard deleted successfully!');
+      if (showToast) showToast('Standard deleted successfully!', 'success');
       fetchData();
     } catch (error) {
       console.error('Error deleting standard:', error);
-      alert('Failed to delete standard');
+      if (showToast) showToast('Failed to delete standard', 'error');
     }
   };
 
@@ -190,7 +190,7 @@ const StandardsAdminPage = ({ onBack }) => {
             })
           })
         ]);
-        alert('Standard updated successfully!');
+        if (showToast) showToast('Standard updated successfully!', 'success');
       } else {
         // Create both standard and info
         await Promise.all([
@@ -217,14 +217,14 @@ const StandardsAdminPage = ({ onBack }) => {
             })
           })
         ]);
-        alert('Standard created successfully!');
+        if (showToast) showToast('Standard created successfully!', 'success');
       }
 
       setShowModal(false);
       fetchData();
     } catch (error) {
       console.error('Error saving standard:', error);
-      alert('Failed to save standard');
+      if (showToast) showToast('Failed to save standard', 'error');
     }
   };
 

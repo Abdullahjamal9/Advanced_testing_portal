@@ -1,10 +1,10 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { Edit2, Trash2, Upload, FileSpreadsheet, Download } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { useTheme } from '../contexts/ThemeContext';
 import '../PTIS_App.css';
 
-const QuestionsAdminPage = ({ onBack }) => {
+const QuestionsAdminPage = ({ onBack, showToast }) => {
   const { theme, isDarkMode } = useTheme();
   const [questions, setQuestions] = useState([]);
   const [standards, setStandards] = useState([]);
@@ -18,6 +18,10 @@ const QuestionsAdminPage = ({ onBack }) => {
   const [excelData, setExcelData] = useState([]);
   const [excelFile, setExcelFile] = useState(null);
   const fileInputRef = useRef(null);
+  
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 50; // Show 50 questions per page
   
   const [formData, setFormData] = useState({
     Question: '',
@@ -72,7 +76,7 @@ const QuestionsAdminPage = ({ onBack }) => {
       setLoading(false);
     } catch (error) {
       console.error('Error fetching data:', error);
-      alert('Failed to load questions data');
+      if (showToast) showToast('Failed to load questions data', 'error');
       setStandards([]);
       setQuestions([]);
       setLoading(false);
@@ -93,6 +97,20 @@ const QuestionsAdminPage = ({ onBack }) => {
     });
     return filtered;
   }, [questions, filterStandard, searchQuery]);
+
+  // Paginated questions
+  const paginatedQuestions = useMemo(() => {
+    const startIndex = (currentPage - 1) * itemsPerPage;
+    const endIndex = startIndex + itemsPerPage;
+    return filteredQuestions.slice(startIndex, endIndex);
+  }, [filteredQuestions, currentPage, itemsPerPage]);
+
+  const totalPages = Math.ceil(filteredQuestions.length / itemsPerPage);
+
+  // Reset to page 1 when filter changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [filterStandard, searchQuery]);
 
   const handleAdd = () => {
     setEditMode(false);
@@ -135,11 +153,11 @@ const QuestionsAdminPage = ({ onBack }) => {
       });
       
       if (!response.ok) throw new Error('Delete failed');
-      alert('Question deleted successfully!');
+      if (showToast) showToast('Question deleted successfully!', 'success');
       fetchData();
     } catch (error) {
       console.error('Error deleting question:', error);
-      alert('Failed to delete question');
+      if (showToast) showToast('Failed to delete question', 'error');
     }
   };
 
@@ -154,8 +172,11 @@ const QuestionsAdminPage = ({ onBack }) => {
           body: JSON.stringify(formData)
         });
         
-        if (!response.ok) throw new Error('Update failed');
-        alert('Question updated successfully!');
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(errorText || 'Update failed');
+        }
+        if (showToast) showToast('Question updated successfully!', 'success');
       } else {
         const response = await fetch('http://localhost:3001/api/questions', {
           method: 'POST',
@@ -163,24 +184,28 @@ const QuestionsAdminPage = ({ onBack }) => {
           body: JSON.stringify(formData)
         });
         
-        if (!response.ok) throw new Error('Create failed');
-        alert('Question created successfully!');
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(errorText || 'Create failed');
+        }
+        if (showToast) showToast('Question created successfully!', 'success');
       }
 
       setShowModal(false);
       fetchData();
     } catch (error) {
       console.error('Error saving question:', error);
-      alert('Failed to save question');
+      if (showToast) showToast(`Failed to save question: ${error.message}`, 'error');
     }
   };
 
-  const handleChange = (e) => {
-    setFormData({
-      ...formData,
-      [e.target.name]: e.target.value
-    });
-  };
+  const handleChange = useCallback((e) => {
+    const { name, value } = e.target;
+    setFormData(prev => ({
+      ...prev,
+      [name]: value
+    }));
+  }, []);
 
   // Excel file handling
   const handleExcelFileChange = (e) => {
@@ -205,7 +230,7 @@ const QuestionsAdminPage = ({ onBack }) => {
           const missingColumns = requiredColumns.filter(col => !columns.includes(col));
           
           if (missingColumns.length > 0) {
-            alert(`Missing columns: ${missingColumns.join(', ')}\n\nRequired columns: Question, Opt_A, Opt_B, Opt_C, Opt_D, Answer, Standard_List`);
+            if (showToast) showToast(`Missing columns: ${missingColumns.join(', ')}. Required: Question, Opt_A, Opt_B, Opt_C, Opt_D, Answer, Standard_List`, 'error');
             setExcelFile(null);
             if (fileInputRef.current) fileInputRef.current.value = '';
             return;
@@ -216,7 +241,7 @@ const QuestionsAdminPage = ({ onBack }) => {
         }
       } catch (error) {
         console.error('Error parsing Excel:', error);
-        alert('Failed to parse Excel file. Please check the file format.');
+        if (showToast) showToast('Failed to parse Excel file. Please check the file format.', 'error');
         setExcelFile(null);
         if (fileInputRef.current) fileInputRef.current.value = '';
       }
@@ -227,7 +252,7 @@ const QuestionsAdminPage = ({ onBack }) => {
 
   const handleBulkUpload = async () => {
     if (!excelData || excelData.length === 0) {
-      alert('No Data To Upload');
+      if (showToast) showToast('No Data To Upload', 'error');
       return;
     }
 
@@ -255,7 +280,7 @@ const QuestionsAdminPage = ({ onBack }) => {
       const result = await response.json();
       console.log('Upload Result:', result);
       
-      alert(`Successfully Added ${result.success} Questions!${result.failed > 0 ? `\nFailed: ${result.failed}` : ''}`);
+      if (showToast) showToast(`Successfully Added ${result.success} Questions!${result.failed > 0 ? ` Failed: ${result.failed}` : ''}`, 'success');
       
       setShowExcelUploadModal(false);
       setExcelData(null);
@@ -264,7 +289,7 @@ const QuestionsAdminPage = ({ onBack }) => {
       fetchData();
     } catch (error) {
       console.error('Error Uploading Questions:', error);
-      alert(`Failed To Upload Questions: ${error.message || 'Unknown Error'}`);
+      if (showToast) showToast(`Failed To Upload Questions: ${error.message || 'Unknown Error'}`, 'error');
     } finally {
       setLoading(false);
     }
@@ -716,7 +741,7 @@ overflow: 'hidden',
               </tr>
             </thead>
             <tbody>
-              {filteredQuestions.map((question, index) => (
+              {paginatedQuestions.map((question, index) => (
                 <tr key={question.NO} style={{ borderBottom: `1px solid ${colors.border}` }}>
                   <td style={{ padding: '12px', border: `1px solid ${colors.border}`, color: colors.text }}>{question.NO}</td>
                   <td style={{ padding: '12px', border: `1px solid ${colors.border}` }}>
@@ -801,6 +826,65 @@ overflow: 'hidden',
             </tbody>
           </table>
         </div>
+
+        {/* Pagination Controls */}
+        {totalPages > 1 && (
+          <div style={{
+            display: 'flex',
+            justifyContent: 'center',
+            alignItems: 'center',
+            gap: '10px',
+            marginTop: '20px',
+            padding: '15px',
+            backgroundColor: colors.cardBg,
+            borderRadius: '15px'
+          }}>
+            <button
+              onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+              disabled={currentPage === 1}
+              style={{
+                padding: '8px 16px',
+                backgroundColor: currentPage === 1 ? colors.border : '#1a1a2e',
+                color: currentPage === 1 ? colors.textMuted : 'white',
+                border: 'none',
+                borderRadius: '8px',
+                cursor: currentPage === 1 ? 'not-allowed' : 'pointer',
+                fontWeight: '600',
+                fontSize: '14px',
+                transition: 'all 0.2s ease'
+              }}
+            >
+              Previous
+            </button>
+            
+            <span style={{ 
+              color: colors.text, 
+              fontWeight: '600',
+              fontSize: '14px',
+              padding: '0 10px'
+            }}>
+              Page {currentPage} of {totalPages} ({filteredQuestions.length} questions)
+            </span>
+            
+            <button
+              onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+              disabled={currentPage === totalPages}
+              style={{
+                padding: '8px 16px',
+                backgroundColor: currentPage === totalPages ? colors.border : '#1a1a2e',
+                color: currentPage === totalPages ? colors.textMuted : 'white',
+                border: 'none',
+                borderRadius: '8px',
+                cursor: currentPage === totalPages ? 'not-allowed' : 'pointer',
+                fontWeight: '600',
+                fontSize: '14px',
+                transition: 'all 0.2s ease'
+              }}
+            >
+              Next
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Modal for Add/Edit */}

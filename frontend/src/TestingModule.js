@@ -26,7 +26,8 @@ import {
   FileCheck,
   Moon,
   Sun,
-  Search
+  Search,
+  Info
 } from 'lucide-react';
 import { useTheme } from './contexts/ThemeContext';
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, LineChart, Line } from 'recharts';
@@ -34,6 +35,115 @@ import StandardsAdminPage from './admin/StandardsAdminPage';
 import QuestionsAdminPage from './admin/QuestionsAdminPage';
 import ptisLogo from './assets/ptisLogo.png';
 import './LoginPage.css';
+
+// Toast Notification Component
+const Toast = ({ message, type = 'info', onClose, isDarkMode }) => {
+  const [isVisible, setIsVisible] = useState(false);
+
+  useEffect(() => {
+    // Trigger enter animation
+    setTimeout(() => setIsVisible(true), 10);
+    
+    // Auto close after 4 seconds
+    const timer = setTimeout(() => {
+      setIsVisible(false);
+      setTimeout(onClose, 300);
+    }, 4000);
+
+    return () => clearTimeout(timer);
+  }, [onClose]);
+
+  const getToastStyles = () => {
+    const baseStyles = {
+      position: 'fixed',
+      top: '20px',
+      right: isVisible ? '20px' : '-400px',
+      zIndex: 999999,
+      minWidth: '300px',
+      maxWidth: '450px',
+      padding: '12px 16px',
+      borderRadius: '10px',
+      display: 'flex',
+      alignItems: 'center',
+      gap: '10px',
+      fontSize: '14px',
+      fontWeight: '500',
+      boxShadow: '0 6px 20px rgba(0, 0, 0, 0.4)',
+      transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+      backdropFilter: 'blur(8px)',
+      border: '1px solid',
+    };
+
+    const types = {
+      success: {
+        background: isDarkMode 
+          ? 'linear-gradient(135deg, rgba(16, 185, 129, 0.9) 0%, rgba(5, 150, 105, 0.9) 100%)'
+          : 'linear-gradient(135deg, rgba(16, 185, 129, 0.95) 0%, rgba(5, 150, 105, 0.95) 100%)',
+        borderColor: isDarkMode ? 'rgba(16, 185, 129, 0.6)' : 'rgba(16, 185, 129, 0.5)',
+        color: isDarkMode ? '#ffffff' : '#ffffff',
+        icon: <CheckCircle size={20} />,
+      },
+      error: {
+        background: isDarkMode 
+          ? 'linear-gradient(135deg, rgba(239, 68, 68, 0.9) 0%, rgba(220, 38, 38, 0.9) 100%)'
+          : 'linear-gradient(135deg, rgba(239, 68, 68, 0.95) 0%, rgba(220, 38, 38, 0.95) 100%)',
+        borderColor: isDarkMode ? 'rgba(239, 68, 68, 0.6)' : 'rgba(239, 68, 68, 0.5)',
+        color: isDarkMode ? '#ffffff' : '#ffffff',
+        icon: <XCircle size={20} />,
+      },
+      info: {
+        background: isDarkMode 
+          ? 'linear-gradient(135deg, rgba(59, 130, 246, 0.9) 0%, rgba(37, 99, 235, 0.9) 100%)'
+          : 'linear-gradient(135deg, rgba(59, 130, 246, 0.95) 0%, rgba(37, 99, 235, 0.95) 100%)',
+        borderColor: isDarkMode ? 'rgba(59, 130, 246, 0.6)' : 'rgba(59, 130, 246, 0.5)',
+        color: isDarkMode ? '#ffffff' : '#ffffff',
+        icon: <Info size={20} />,
+      },
+      loading: {
+        background: isDarkMode 
+          ? 'linear-gradient(135deg, rgba(168, 85, 247, 0.9) 0%, rgba(147, 51, 234, 0.9) 100%)'
+          : 'linear-gradient(135deg, rgba(168, 85, 247, 0.95) 0%, rgba(147, 51, 234, 0.95) 100%)',
+        borderColor: isDarkMode ? 'rgba(168, 85, 247, 0.6)' : 'rgba(168, 85, 247, 0.5)',
+        color: isDarkMode ? '#ffffff' : '#ffffff',
+        icon: <Loader size={20} className="spin-animation" />,
+      },
+    };
+
+    const typeStyle = types[type] || types.info;
+
+    return {
+      ...baseStyles,
+      background: typeStyle.background,
+      borderColor: typeStyle.borderColor,
+      color: typeStyle.color,
+      icon: typeStyle.icon,
+    };
+  };
+
+  const styles = getToastStyles();
+
+  return (
+    <>
+      <style>{`
+        @keyframes spin {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
+        }
+        .spin-animation {
+          animation: spin 1s linear infinite;
+        }
+      `}</style>
+      <div style={styles}>
+        <div style={{ flexShrink: 0 }}>
+          {styles.icon}
+        </div>
+        <div style={{ flex: 1, lineHeight: '1.4' }}>
+          {message}
+        </div>
+      </div>
+    </>
+  );
+};
 
 // HomePage Component - Moved outside to prevent re-creation
 const HomePage = React.memo(({ 
@@ -57,7 +167,8 @@ const HomePage = React.memo(({
   handleAdminLogin,
   error,
   idInputRef,
-  fillEmployeeNameFromTypedId
+  fillEmployeeNameFromTypedId,
+  showToast
 }) => (
   <div className="login-backdrop">
     <div className="login-main-container">
@@ -185,7 +296,15 @@ const HomePage = React.memo(({
             )}
 
             <div className="forgot-link">
-              <a href="#">Need Help?</a>
+              <a 
+                href="#" 
+                onClick={(e) => {
+                  e.preventDefault();
+                  showToast('Contact Admin: +92-21-34559070 or +92-21-34533739', 'info');
+                }}
+              >
+                Need Help?
+              </a>
             </div>
 
             <button
@@ -244,7 +363,15 @@ const HomePage = React.memo(({
             </div>
 
             <div className="forgot-link">
-              <a href="#">Need Help?</a>
+              <a 
+                href="#" 
+                onClick={(e) => {
+                  e.preventDefault();
+                  showToast('Contact System Administrator for Password Reset', 'info');
+                }}
+              >
+                Need Help?
+              </a>
             </div>
 
             <button
@@ -282,6 +409,19 @@ const HomePage = React.memo(({
 const TestingModule = () => {
   const API_BASE_URL = 'http://localhost:3001';
   const { theme, isDarkMode, toggleTheme } = useTheme();
+
+  // Toast State
+  const [toasts, setToasts] = useState([]);
+
+  // Toast Helper Function
+  const showToast = useCallback((message, type = 'info') => {
+    const id = Date.now();
+    setToasts(prev => [...prev, { id, message, type }]);
+  }, []);
+
+  const removeToast = useCallback((id) => {
+    setToasts(prev => prev.filter(toast => toast.id !== id));
+  }, []);
 
   // State
   const [currentPage, setCurrentPage] = useState(() => {
@@ -506,10 +646,12 @@ const TestingModule = () => {
   const handleStartTest = () => {
     if (!selectedEmployee || !selectedStandard) {
       setError('Please select both employee and standard');
+      showToast('Please select both employee and standard', 'error');
       return;
     }
     if (!testInfo || !questions.length) {
       setError('Test information or questions not loaded. Please try again.');
+      showToast('Test information or questions not loaded. Please try again.', 'error');
       return;
     }
 
@@ -690,8 +832,10 @@ const TestingModule = () => {
       setError('');
       loadResults(true);
       setAdminPassword('');
+      showToast('Admin login successful!', 'success');
     } else {
       setError('Invalid Admin Password');
+      showToast('Invalid Admin Password', 'error');
     }
   };
 
@@ -737,10 +881,12 @@ const TestingModule = () => {
       }
       const responseData = await response.json();
       console.log('Save Result Response:', responseData);
+      showToast('Test result saved successfully!', 'success');
       return true;
     } catch (err) {
       setError('Failed to Save Result to Database: ' + err.message);
       console.error('Error Saving Result:', err);
+      showToast('Failed to save test result to database', 'error');
       return false;
     }
   };
@@ -2015,10 +2161,10 @@ const TestingModule = () => {
                                 window.URL.revokeObjectURL(url);
                                 document.body.removeChild(a);
                                 
-                                alert(`Certificate generated successfully for ${norm(result.NAME)}!`);
+                                showToast(`Certificate generated successfully for ${norm(result.NAME)}!`, 'success');
                               } catch (error) {
                                 console.error('Certificate generation error:', error);
-                                alert(`Failed to generate certificate: ${error.message}`);
+                                showToast(`Failed to generate certificate: ${error.message}`, 'error');
                               }
                             }}
                             style={{
@@ -3328,11 +3474,11 @@ const TestingModule = () => {
                                   { method: 'DELETE' }
                                 );
                                 if (!response.ok) throw new Error('Delete failed');
-                                alert('Result deleted successfully!');
+                                showToast('Result deleted successfully!', 'success');
                                 loadResults(true);
                               } catch (error) {
                                 console.error('Error deleting result:', error);
-                                alert('Failed to delete result');
+                                showToast('Failed to delete result', 'error');
                               }
                             };
 
@@ -3445,12 +3591,12 @@ const TestingModule = () => {
 
             {/* Standards Tab */}
             {adminActiveTab === 'standards' && (
-              <StandardsAdminPage onBack={() => setAdminActiveTab('dashboard')} />
+              <StandardsAdminPage onBack={() => setAdminActiveTab('dashboard')} showToast={showToast} />
             )}
 
             {/* Questions Tab */}
             {adminActiveTab === 'questions' && (
-              <QuestionsAdminPage onBack={() => setAdminActiveTab('dashboard')} />
+              <QuestionsAdminPage onBack={() => setAdminActiveTab('dashboard')} showToast={showToast} />
             )}
 
             {/* Practical Results Tab */}
@@ -3626,7 +3772,7 @@ const TestingModule = () => {
 
       const employee = employees.find(emp => String(emp.ID) === String(formData.employeeId));
       if (!employee) {
-        alert('Employee not found');
+        showToast('Employee not found', 'error');
         setLoading(false);
         return;
       }
@@ -3660,18 +3806,18 @@ const TestingModule = () => {
         });
 
         if (response.ok) {
-          alert(editMode ? 'Practical result updated successfully!' : 'Practical result added successfully!');
+          showToast(editMode ? 'Practical result updated successfully!' : 'Practical result added successfully!', 'success');
           setShowModal(false);
           setEditMode(false);
           setCurrentResult(null);
           setFormData({ employeeId: '', employeeName: '', standard: '', standardFullName: '', totalQuestions: '100', correctAnswers: '', percentage: '', passingCriteria: '70' });
           loadResults(true);
         } else {
-          alert(editMode ? 'Failed to update practical result' : 'Failed to add practical result');
+          showToast(editMode ? 'Failed to update practical result' : 'Failed to add practical result', 'error');
         }
       } catch (error) {
         console.error('Error saving practical result:', error);
-        alert('Error saving practical result');
+        showToast('Error saving practical result', 'error');
       }
 
       setLoading(false);
@@ -3713,14 +3859,14 @@ const TestingModule = () => {
         );
 
         if (response.ok) {
-          alert('Practical result deleted successfully!');
+          showToast('Practical result deleted successfully!', 'success');
           loadResults(true);
         } else {
-          alert('Failed to delete practical result');
+          showToast('Failed to delete practical result', 'error');
         }
       } catch (error) {
         console.error('Error deleting practical result:', error);
-        alert('Error deleting practical result');
+        showToast('Error deleting practical result', 'error');
       }
     };
 
@@ -4493,7 +4639,7 @@ const TestingModule = () => {
       const name = String(formData.Name || '').trim();
       
       if (!id || !name) {
-        alert('Please fill all fields');
+        showToast('Please fill all fields', 'error');
         return;
       }
 
@@ -4502,15 +4648,17 @@ const TestingModule = () => {
         if (editMode) {
           await updateEmployee({ ID: id, Name: name });
           setMsg('Employee updated successfully');
+          showToast('Employee updated successfully!', 'success');
         } else {
           await createEmployee({ ID: id, Name: name });
           setMsg('Employee added successfully');
+          showToast('Employee added successfully!', 'success');
         }
         await refreshEmployees();
         setShowModal(false);
         setTimeout(() => setMsg(''), 3000);
       } catch (error) {
-        alert(`Failed: ${error.message}`);
+        showToast(`Failed: ${error.message}`, 'error');
       } finally {
         setSaving(false);
       }
@@ -4522,10 +4670,11 @@ const TestingModule = () => {
       try {
         await deleteEmployee(employeeId);
         setMsg('Employee deleted successfully');
+        showToast('Employee deleted successfully!', 'success');
         await refreshEmployees();
         setTimeout(() => setMsg(''), 3000);
       } catch (error) {
-        alert(`Failed to delete: ${error.message}`);
+        showToast(`Failed to delete: ${error.message}`, 'error');
       }
     };
 
@@ -4935,6 +5084,17 @@ const TestingModule = () => {
   // Main Render
   return (
     <>
+      {/* Toast Notifications */}
+      {toasts.map(toast => (
+        <Toast
+          key={toast.id}
+          message={toast.message}
+          type={toast.type}
+          onClose={() => removeToast(toast.id)}
+          isDarkMode={isDarkMode}
+        />
+      ))}
+
       {currentPage === 'home' && <HomePage 
         activeLoginForm={activeLoginForm}
         setActiveLoginForm={setActiveLoginForm}
@@ -4957,9 +5117,10 @@ const TestingModule = () => {
         error={error}
         idInputRef={idInputRef}
         fillEmployeeNameFromTypedId={fillEmployeeNameFromTypedId}
+        showToast={showToast}
       />}
-      {currentPage === 'test' && <TestPage />}
-      {currentPage === 'result' && <ResultPage />}
+      {currentPage === 'test' && <TestPage showToast={showToast} />}
+      {currentPage === 'result' && <ResultPage showToast={showToast} />}
       {currentPage === 'admin' && <AdminPage />}
     </>
   );

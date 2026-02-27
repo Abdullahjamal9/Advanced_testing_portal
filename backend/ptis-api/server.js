@@ -306,7 +306,7 @@ app.put('/api/questions/:no', async (req, res) => {
   try {
     const [result] = await pool.query(
       `UPDATE questions 
-       SET Question = ?, Opt_A = ?, Opt_B = ?, Opt_C = ?, Opt_D = ?, Answer = ?, Standard = ?
+       SET Question = ?, Opt_A = ?, Opt_B = ?, Opt_C = ?, Opt_D = ?, Answer = ?, Standard_List = ?
        WHERE NO = ?`,
       [Question, Opt_A, Opt_B, Opt_C, Opt_D, Answer, Standard_List, no]
     );
