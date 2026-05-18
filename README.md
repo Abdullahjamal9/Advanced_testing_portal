@@ -120,7 +120,6 @@ Employee Login → Test Attempt → Auto Grading (Negative Marking) → Result E
 
 ## 📈 Future Improvements
 
-- AI auto-grading system enhancement
 - Face recognition proctoring
 - Email certificate delivery
 - Cloud storage integration
