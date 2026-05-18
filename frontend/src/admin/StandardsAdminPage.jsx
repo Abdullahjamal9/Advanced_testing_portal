@@ -1,10 +1,22 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Edit2, Trash2, BookOpen } from 'lucide-react';
 import { useTheme } from '../contexts/ThemeContext';
 import '../PTIS_App.css';
 
 const StandardsAdminPage = ({ onBack, showToast }) => {
+  const API_BASE_URL = (() => {
+    const envBase = (process.env.REACT_APP_API_BASE_URL || '').replace(/\/$/, '');
+    if (envBase) return envBase;
+    if (process.env.NODE_ENV === 'development') return '';
+    if (typeof window !== 'undefined') {
+      return `${window.location.protocol}//${window.location.hostname}:3001`;
+    }
+    return '';
+  })();
   const { theme, isDarkMode, toggleTheme } = useTheme();
+  const [viewportWidth, setViewportWidth] = useState(() =>
+    typeof window !== 'undefined' ? window.innerWidth : 1200
+  );
   const [standards, setStandards] = useState([]);
   const [infos, setInfos] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -12,7 +24,11 @@ const StandardsAdminPage = ({ onBack, showToast }) => {
   const [editMode, setEditMode] = useState(false);
   const [currentStandard, setCurrentStandard] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [availableTemplates, setAvailableTemplates] = useState([]);
+  const [standardsCurrentPage, setStandardsCurrentPage] = useState(1);
+  const [standardsGoToPage, setStandardsGoToPage] = useState('');
+  const [templateFile, setTemplateFile] = useState(null);
+  const [templateUploading, setTemplateUploading] = useState(false);
+  const templateInputRef = useRef(null);
   
   const [formData, setFormData] = useState({
     Standard_List: '',
@@ -25,6 +41,19 @@ const StandardsAdminPage = ({ onBack, showToast }) => {
     Negative_Marking: 'Yes',
     Certificate_Template: ''
   });
+
+  const isMobile = viewportWidth <= 768;
+  const isTablet = viewportWidth <= 1024;
+  const twoColumnGrid = isMobile ? '1fr' : '1fr 1fr';
+  const TEMPLATE_MAX_BYTES = 25 * 1024 * 1024;
+  const templateAllowedMimeTypes = new Set(['application/pdf']);
+  const templateAllowedExtensions = new Set(['.pdf']);
+
+  useEffect(() => {
+    const handleResize = () => setViewportWidth(window.innerWidth);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   // Color scheme based on theme
   const colors = {
@@ -45,34 +74,21 @@ const StandardsAdminPage = ({ onBack, showToast }) => {
 
   useEffect(() => {
     fetchData();
-    fetchTemplates();
   }, []);
 
-  const fetchTemplates = async () => {
-    try {
-      const response = await fetch('http://localhost:3001/api/certificate-templates');
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-      const templates = await response.json();
-      // Ensure templates is an array
-      if (Array.isArray(templates)) {
-        setAvailableTemplates(templates);
-      } else {
-        console.error('Templates response is not an array:', templates);
-        setAvailableTemplates([]);
-      }
-    } catch (error) {
-      console.error('Error fetching templates:', error);
-      setAvailableTemplates([]); // Set to empty array on error
-    }
+  const getTemplateBaseName = (fileName) => {
+    const safeName = String(fileName || '').trim();
+    if (!safeName) return '';
+    const dotIndex = safeName.lastIndexOf('.');
+    return dotIndex > 0 ? safeName.slice(0, dotIndex) : safeName;
   };
+
 
   const fetchData = async () => {
     try {
       const [standardsRes, infosRes] = await Promise.all([
-        fetch('http://localhost:3001/api/standards'),
-        fetch('http://localhost:3001/api/info')
+        fetch(`${API_BASE_URL}/api/standards`),
+        fetch(`${API_BASE_URL}/api/info`)
       ]);
       
       if (!standardsRes.ok || !infosRes.ok) {
@@ -103,6 +119,8 @@ const StandardsAdminPage = ({ onBack, showToast }) => {
   const handleAdd = () => {
     setEditMode(false);
     setCurrentStandard(null);
+    setTemplateFile(null);
+    if (templateInputRef.current) templateInputRef.current.value = '';
     setFormData({
       Standard_List: '',
       Short_Name: '',
@@ -120,6 +138,8 @@ const StandardsAdminPage = ({ onBack, showToast }) => {
   const handleEdit = (standard) => {
     setEditMode(true);
     setCurrentStandard(standard.Standard_List);
+    setTemplateFile(null);
+    if (templateInputRef.current) templateInputRef.current.value = '';
     const info = getInfoForStandard(standard.Standard_List);
     
     setFormData({
@@ -144,10 +164,10 @@ const StandardsAdminPage = ({ onBack, showToast }) => {
     try {
       // Delete both standard and info
       await Promise.all([
-        fetch(`http://localhost:3001/api/standards/${encodeURIComponent(standardName)}`, {
+        fetch(`${API_BASE_URL}/api/standards/${encodeURIComponent(standardName)}`, {
           method: 'DELETE'
         }),
-        fetch(`http://localhost:3001/api/info/${encodeURIComponent(standardName)}`, {
+        fetch(`${API_BASE_URL}/api/info/${encodeURIComponent(standardName)}`, {
           method: 'DELETE'
         })
       ]);
@@ -160,14 +180,103 @@ const StandardsAdminPage = ({ onBack, showToast }) => {
     }
   };
 
+  const resetTemplateFile = () => {
+    setTemplateFile(null);
+    if (templateInputRef.current) templateInputRef.current.value = '';
+  };
+
+  const handleTemplateFileChange = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) {
+      resetTemplateFile();
+      return;
+    }
+
+    const ext = `.${String(file.name || '').split('.').pop()}`.toLowerCase();
+    const extOk = templateAllowedExtensions.has(ext);
+    const mimeOk = templateAllowedMimeTypes.has(file.type);
+
+    if (!extOk && !mimeOk) {
+      if (showToast) showToast('Only PDF templates are allowed.', 'error');
+      resetTemplateFile();
+      return;
+    }
+
+    if (file.size > TEMPLATE_MAX_BYTES) {
+      if (showToast) showToast('Template must be 25MB or smaller.', 'error');
+      resetTemplateFile();
+      return;
+    }
+
+    setTemplateFile(file);
+  };
+
+  const uploadTemplateForStandard = async (standardName) => {
+    if (!templateFile) return null;
+    const safeStandard = String(standardName || '').trim();
+    if (!safeStandard) {
+      if (showToast) showToast('Standard name is required before uploading template', 'error');
+      return null;
+    }
+
+    const formDataPayload = new FormData();
+    formDataPayload.append('template', templateFile);
+    formDataPayload.append('standard', safeStandard);
+    const baseName = getTemplateBaseName(templateFile.name);
+    if (baseName) {
+      formDataPayload.append('template_name', baseName);
+    }
+
+    setTemplateUploading(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/certificate-templates`, {
+        method: 'POST',
+        body: formDataPayload
+      });
+
+      if (!response.ok) {
+        let errorMessage = 'Failed to upload template';
+        try {
+          const payload = await response.json();
+          if (payload?.error) errorMessage = payload.error;
+        } catch (_) {
+          // Ignore JSON parsing errors.
+        }
+        if (showToast) showToast(errorMessage, 'error');
+        return null;
+      }
+
+      const payload = await response.json();
+      const templateName = payload?.template || baseName;
+      if (templateName) {
+        setFormData(prev => ({ ...prev, Certificate_Template: templateName }));
+      }
+      if (showToast) showToast('Template uploaded successfully!', 'success');
+      resetTemplateFile();
+      return templateName || null;
+    } catch (error) {
+      console.error('Template upload error:', error);
+      if (showToast) showToast('Failed to upload template', 'error');
+      return null;
+    } finally {
+      setTemplateUploading(false);
+    }
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
 
     try {
+      const targetStandard = String(formData.Standard_List || '').trim();
+      if (!targetStandard) {
+        if (showToast) showToast('Standard name is required', 'error');
+        return;
+      }
+
       if (editMode) {
         // Update both standard and info
         await Promise.all([
-          fetch(`http://localhost:3001/api/standards/${encodeURIComponent(currentStandard)}`, {
+          fetch(`${API_BASE_URL}/api/standards/${encodeURIComponent(currentStandard)}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -177,7 +286,7 @@ const StandardsAdminPage = ({ onBack, showToast }) => {
               Certificate_Template: formData.Certificate_Template
             })
           }),
-          fetch(`http://localhost:3001/api/info/${encodeURIComponent(currentStandard)}`, {
+          fetch(`${API_BASE_URL}/api/info/${encodeURIComponent(currentStandard)}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -190,11 +299,15 @@ const StandardsAdminPage = ({ onBack, showToast }) => {
             })
           })
         ]);
+
+        if (templateFile) {
+          await uploadTemplateForStandard(targetStandard);
+        }
         if (showToast) showToast('Standard updated successfully!', 'success');
       } else {
         // Create both standard and info
         await Promise.all([
-          fetch('http://localhost:3001/api/standards', {
+          fetch(`${API_BASE_URL}/api/standards`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -204,7 +317,7 @@ const StandardsAdminPage = ({ onBack, showToast }) => {
               Certificate_Template: formData.Certificate_Template
             })
           }),
-          fetch('http://localhost:3001/api/info', {
+          fetch(`${API_BASE_URL}/api/info`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -217,10 +330,15 @@ const StandardsAdminPage = ({ onBack, showToast }) => {
             })
           })
         ]);
+
+        if (templateFile) {
+          await uploadTemplateForStandard(targetStandard);
+        }
         if (showToast) showToast('Standard created successfully!', 'success');
       }
 
       setShowModal(false);
+      resetTemplateFile();
       fetchData();
     } catch (error) {
       console.error('Error saving standard:', error);
@@ -239,6 +357,23 @@ const StandardsAdminPage = ({ onBack, showToast }) => {
   const filteredStandards = standards.filter(standard => 
     standard.Standard_List.toLowerCase().includes(searchQuery.toLowerCase())
   );
+
+  const standardsItemsPerPage = 20;
+  const totalStandardPages = Math.ceil(filteredStandards.length / standardsItemsPerPage);
+  const paginatedStandards = filteredStandards.slice(
+    (standardsCurrentPage - 1) * standardsItemsPerPage,
+    standardsCurrentPage * standardsItemsPerPage
+  );
+
+  useEffect(() => {
+    setStandardsCurrentPage(1);
+  }, [searchQuery]);
+
+  useEffect(() => {
+    if (totalStandardPages > 0 && standardsCurrentPage > totalStandardPages) {
+      setStandardsCurrentPage(totalStandardPages);
+    }
+  }, [standardsCurrentPage, totalStandardPages]);
 
   if (loading) {
     return <div style={{ padding: '50px', textAlign: 'center' }}>Loading standards...</div>;
@@ -268,7 +403,7 @@ const StandardsAdminPage = ({ onBack, showToast }) => {
         style={{ display: 'none' }} 
       />
       
-      <div style={{ maxWidth: '1400px', margin: '0 auto' }}>
+      <div style={{ maxWidth: '1400px', margin: '0 auto', padding: isMobile ? '0 6px' : 0 }}>
         {/* Search/Filter Card */}
         <div style={{ 
           backgroundColor: colors.cardBg, 
@@ -312,7 +447,7 @@ overflow: 'hidden',
             alignItems: 'center',
             flexWrap: 'wrap'
           }}>
-            <div style={{ flex: '1', minWidth: '250px' }}>
+            <div style={{ flex: '1', minWidth: isMobile ? '100%' : '250px' }}>
               <input
                 type="text"
                 placeholder="Search by standard name..."
@@ -332,17 +467,23 @@ overflow: 'hidden',
               />
             </div>
             <button
-              onClick={() => setSearchQuery('')}
+              onClick={() => {
+                setSearchQuery('');
+                setStandardsCurrentPage(1);
+              }}
               disabled={!searchQuery}
               style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
                 padding: '12px 24px',
-                backgroundColor: colors.cardBg,
+                backgroundColor: colors.inputBg,
                 color: colors.textMuted,
-                border: `2px solid ${colors.border}`,
+                border: `2px solid ${colors.inputBorder}`,
                 borderRadius: '28px',
                 cursor: searchQuery ? 'pointer' : 'not-allowed',
-                fontSize: '14px',
-                fontWeight: '600',
+                fontSize: '0.95em',
+                fontWeight: '500',
                 opacity: searchQuery ? 1 : 0.5,
                 transition: 'all 0.2s ease'
               }}
@@ -350,15 +491,22 @@ overflow: 'hidden',
                 if (searchQuery) {
                   e.currentTarget.style.borderColor = '#c0392b';
                   e.currentTarget.style.color = '#c0392b';
-                  e.currentTarget.style.backgroundColor = isDarkMode ? '#2d1f1f' : '#fff5f5';
+                  e.currentTarget.style.backgroundColor = colors.cardBg;
                 }
               }}
               onMouseOut={(e) => {
-                e.currentTarget.style.borderColor = colors.border;
+                e.currentTarget.style.borderColor = colors.inputBorder;
                 e.currentTarget.style.color = colors.textMuted;
-                e.currentTarget.style.backgroundColor = colors.cardBg;
+                e.currentTarget.style.backgroundColor = colors.inputBg;
               }}
             >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                <polyline points="3 6 5 6 21 6"></polyline>
+                <path d="M19 6l-1 14H6L5 6"></path>
+                <path d="M10 11v6"></path>
+                <path d="M14 11v6"></path>
+                <path d="M9 6V4h6v2"></path>
+              </svg>
               Clear Filter
             </button>
           </div>
@@ -393,7 +541,7 @@ overflow: 'hidden',
                     </td>
                   </tr>
                 ) : (
-                  filteredStandards.map((standard, index) => {
+                  paginatedStandards.map((standard, index) => {
                     const info = getInfoForStandard(standard.Standard_List);
                     return (
                       <tr 
@@ -503,6 +651,111 @@ overflow: 'hidden',
               </tbody>
             </table>
           </div>
+          {totalStandardPages > 1 && (
+            <div style={{
+              display: 'flex',
+              justifyContent: 'center',
+              alignItems: 'center',
+              gap: '10px',
+              flexWrap: 'wrap',
+              padding: '14px 16px',
+              backgroundColor: colors.cardBg,
+              borderTop: `1px solid ${colors.border}`
+            }}>
+            <button
+              onClick={() => setStandardsCurrentPage(prev => Math.max(1, prev - 1))}
+              disabled={standardsCurrentPage === 1}
+              style={{
+                padding: '8px 16px',
+                backgroundColor: standardsCurrentPage === 1 ? colors.border : '#1a1a2e',
+                color: standardsCurrentPage === 1 ? colors.textMuted : 'white',
+                border: 'none',
+                borderRadius: '8px',
+                cursor: standardsCurrentPage === 1 ? 'not-allowed' : 'pointer',
+                fontWeight: '600',
+                fontSize: '14px',
+                transition: 'all 0.2s ease'
+              }}
+            >
+              Previous
+            </button>
+
+            <span style={{
+              color: colors.text,
+              fontWeight: '600',
+              fontSize: '14px',
+              padding: '0 10px'
+            }}>
+              Page {standardsCurrentPage} of {totalStandardPages} ({filteredStandards.length} standards)
+            </span>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span style={{ color: colors.textMuted, fontWeight: '600', fontSize: '12px' }}>Go to</span>
+              <input
+                type="number"
+                min="1"
+                max={totalStandardPages}
+                value={standardsGoToPage}
+                onChange={(e) => setStandardsGoToPage(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key !== 'Enter') return;
+                  const nextPage = parseInt(standardsGoToPage, 10);
+                  if (!Number.isFinite(nextPage)) return;
+                  setStandardsCurrentPage(Math.min(totalStandardPages, Math.max(1, nextPage)));
+                  setStandardsGoToPage('');
+                }}
+                style={{
+                  width: '70px',
+                  padding: '6px 10px',
+                  border: `1px solid ${colors.border}`,
+                  borderRadius: '8px',
+                  fontSize: '14px',
+                  textAlign: 'center',
+                  backgroundColor: colors.cardAltBg,
+                  color: colors.text
+                }}
+              />
+              <button
+                onClick={() => {
+                  const nextPage = parseInt(standardsGoToPage, 10);
+                  if (!Number.isFinite(nextPage)) return;
+                  setStandardsCurrentPage(Math.min(totalStandardPages, Math.max(1, nextPage)));
+                  setStandardsGoToPage('');
+                }}
+                style={{
+                  padding: '6px 12px',
+                  backgroundColor: '#1a1a2e',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '8px',
+                  cursor: 'pointer',
+                  fontWeight: '600',
+                  fontSize: '13px'
+                }}
+              >
+                Go
+              </button>
+            </div>
+
+            <button
+              onClick={() => setStandardsCurrentPage(prev => Math.min(totalStandardPages, prev + 1))}
+              disabled={standardsCurrentPage === totalStandardPages}
+              style={{
+                padding: '8px 16px',
+                backgroundColor: standardsCurrentPage === totalStandardPages ? colors.border : '#1a1a2e',
+                color: standardsCurrentPage === totalStandardPages ? colors.textMuted : 'white',
+                border: 'none',
+                borderRadius: '8px',
+                cursor: standardsCurrentPage === totalStandardPages ? 'not-allowed' : 'pointer',
+                fontWeight: '600',
+                fontSize: '14px',
+                transition: 'all 0.2s ease'
+              }}
+            >
+              Next
+            </button>
+            </div>
+          )}
         </div>
       </div>
 
@@ -525,10 +778,10 @@ overflow: 'hidden',
         }}>
           <div style={{
             backgroundColor: colors.modalBg,
-            padding: '35px',
+            padding: isMobile ? '22px 16px' : '35px',
             borderRadius: '28px',
             width: '100%',
-            maxWidth: '650px',
+            maxWidth: isMobile ? '100%' : '650px',
             maxHeight: '90vh',
             overflowY: 'auto',
             boxShadow: '0 20px 60px rgba(0, 0, 0, 0.3)',
@@ -563,14 +816,13 @@ overflow: 'hidden',
                   value={formData.Standard_List}
                   onChange={handleChange}
                   required
-                  disabled={editMode}
                   style={{
                     width: '100%',
                     padding: '12px 15px',
                     border: `2px solid ${colors.inputBorder}`,
                     borderRadius: '4px',
                     fontSize: '15px',
-                    backgroundColor: editMode ? colors.cardAltBg : colors.inputBg,
+                    backgroundColor: colors.inputBg,
                     color: colors.text,
                     transition: 'border-color 0.2s ease',
                     outline: 'none',
@@ -614,7 +866,7 @@ overflow: 'hidden',
                 />
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px', marginBottom: '22px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: twoColumnGrid, gap: '15px', marginBottom: '22px' }}>
                 <div>
                   <label style={{ 
                     display: 'block', 
@@ -694,7 +946,7 @@ overflow: 'hidden',
                 }}>
                   Time Limit:
                 </label>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : isTablet ? 'repeat(2, 1fr)' : '1fr 1fr 1fr', gap: '12px' }}>
                   <div>
                     <label style={{ fontSize: '13px', color: colors.textMuted, fontWeight: '500', marginBottom: '6px', display: 'block' }}>Hours</label>
                     <input
@@ -775,43 +1027,92 @@ overflow: 'hidden',
                 </div>
               </div>
 
-              {/* Certificate Template Selection */}
+              {/* Certificate Template Upload */}
               <div style={{ marginTop: '20px' }}>
-                <label style={{ 
+                <label style={{
                   fontSize: '14px',
                   color: colors.text,
                   fontWeight: '600',
                   marginBottom: '8px',
                   display: 'block'
                 }}>
-                  Certificate Template (Optional)
+                  Upload Certificate Template (PDF)
                   <span style={{ fontSize: '12px', color: colors.textMuted, fontWeight: 'normal', marginLeft: '8px' }}>
-                    Select template to use for certificates. Leave empty to use standard name.
+                    Optional. This will attach the uploaded template to this standard.
                   </span>
                 </label>
-                <select
-                  name="Certificate_Template"
-                  value={formData.Certificate_Template}
-                  onChange={handleChange}
-                  style={{
-                    width: '100%',
-                    padding: '12px',
-                    fontSize: '15px',
-                    border: `2px solid ${colors.inputBorder}`,
-                    borderRadius: '4px',
-                    outline: 'none',
-                    transition: 'border-color 0.2s ease',
-                    backgroundColor: colors.inputBg,
-                    color: colors.text
-                  }}
-                  onFocus={(e) => e.target.style.borderColor = '#1a1a2e'}
-                  onBlur={(e) => e.target.style.borderColor = colors.inputBorder}
-                >
-                  <option value="">-- Auto (Use Standard Name) --</option>
-                  {availableTemplates.map(template => (
-                    <option key={template} value={template}>{template}</option>
-                  ))}
-                </select>
+                {formData.Certificate_Template && !templateFile && (
+                  <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '10px',
+                    padding: '10px 12px',
+                    borderRadius: '8px',
+                    backgroundColor: colors.cardAltBg,
+                    border: `1px solid ${colors.inputBorder}`,
+                    marginBottom: '10px'
+                  }}>
+                    <span style={{ color: colors.text, fontSize: '0.9em' }}>
+                      Current: {formData.Certificate_Template}.pdf
+                    </span>
+                  </div>
+                )}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                  <button
+                    type="button"
+                    onClick={() => templateInputRef.current?.click()}
+                    disabled={templateUploading}
+                    onMouseEnter={(e) => {
+                      if (templateUploading) return;
+                      e.currentTarget.style.background = '#fff';
+                      e.currentTarget.style.color = '#c0392b';
+                      e.currentTarget.style.border = '2px solid #c0392b';
+                      e.currentTarget.style.transform = 'translateY(-2px)';
+                      e.currentTarget.style.boxShadow = '0 6px 20px rgba(192, 57, 43, 0.4)';
+                    }}
+                    onMouseLeave={(e) => {
+                      if (templateUploading) return;
+                      e.currentTarget.style.background = 'linear-gradient(120deg, #c0392b, #e74c3c)';
+                      e.currentTarget.style.color = '#fff';
+                      e.currentTarget.style.border = '2px solid transparent';
+                      e.currentTarget.style.transform = 'translateY(0)';
+                      e.currentTarget.style.boxShadow = 'none';
+                    }}
+                    style={{
+                      padding: '10px 16px',
+                      background: templateUploading ? '#95a5a6' : 'linear-gradient(120deg, #c0392b, #e74c3c)',
+                      color: '#fff',
+                      border: '2px solid transparent',
+                      borderRadius: '8px',
+                      cursor: templateUploading ? 'not-allowed' : 'pointer',
+                      fontSize: '13px',
+                      fontWeight: '600',
+                      transition: 'all 0.2s ease',
+                      opacity: templateUploading ? 0.75 : 1
+                    }}
+                  >
+                    Choose PDF
+                  </button>
+                  <span style={{ fontSize: '12px', color: colors.textMuted }}>
+                    {templateFile
+                      ? templateFile.name
+                      : formData.Certificate_Template
+                        ? `${formData.Certificate_Template}.pdf`
+                        : 'No file chosen'}
+                  </span>
+                </div>
+                <input
+                  ref={templateInputRef}
+                  type="file"
+                  accept=".pdf,application/pdf"
+                  onChange={handleTemplateFileChange}
+                  style={{ display: 'none' }}
+                />
+                {templateUploading && (
+                  <div style={{ marginTop: '8px', color: colors.textMuted, fontSize: '12px' }}>
+                    Uploading template...
+                  </div>
+                )}
               </div>
 
               {/* Negative Marking Toggle */}
@@ -819,7 +1120,7 @@ overflow: 'hidden',
                 <label style={{ fontSize: '14px', color: colors.text, fontWeight: '600', marginBottom: '12px', display: 'block' }}>
                   Negative Marking (-0.25 per wrong answer)
                 </label>
-                <div style={{ display: 'flex', gap: '12px' }}>
+                <div style={{ display: 'flex', gap: '12px', flexDirection: isMobile ? 'column' : 'row' }}>
                   <label style={{
                     flex: 1,
                     padding: '15px',
@@ -867,10 +1168,13 @@ overflow: 'hidden',
                 </div>
               </div>
 
-              <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '30px' }}>
+              <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '30px', flexWrap: 'wrap' }}>
                 <button
                   type="button"
-                  onClick={() => setShowModal(false)}
+                  onClick={() => {
+                    setShowModal(false);
+                    resetTemplateFile();
+                  }}
                   style={{
                     padding: '12px 28px',
                     backgroundColor: colors.inputBg,
@@ -880,6 +1184,7 @@ overflow: 'hidden',
                     cursor: 'pointer',
                     fontSize: '15px',
                     fontWeight: '600',
+                    width: isMobile ? '100%' : 'auto',
                     transition: 'all 0.2s ease'
                   }}
                   onMouseOver={e => (e.currentTarget.style.borderColor = '#c0392b', e.currentTarget.style.color = '#c0392b')}
@@ -889,18 +1194,21 @@ overflow: 'hidden',
                 </button>
                 <button
                   type="submit"
+                  disabled={templateUploading}
                   style={{
                     padding: '12px 30px',
-                    background: 'linear-gradient(120deg, #c0392b, #e74c3c)',
-                    color: 'white',
+                    background: templateUploading ? colors.inputBorder : 'linear-gradient(120deg, #c0392b, #e74c3c)',
+                    color: templateUploading ? colors.textMuted : 'white',
                     border: 'none',
                     borderRadius: '18px',
-                    cursor: 'pointer',
+                    cursor: templateUploading ? 'not-allowed' : 'pointer',
                     fontSize: '15px',
                     fontWeight: '600',
+                    width: isMobile ? '100%' : 'auto',
                     transition: 'all 0.2s ease'
                   }}
                   onMouseOver={e => {
+                    if (templateUploading) return;
                     e.currentTarget.style.transform = 'translateY(-2px)';
                     e.currentTarget.style.boxShadow = '0 6px 20px rgba(192, 57, 43, 0.4)';
                   }}
@@ -909,7 +1217,7 @@ overflow: 'hidden',
                     e.currentTarget.style.boxShadow = 'none';
                   }}
                 >
-                  {editMode ? 'Update Standard' : 'Create Standard'}
+                  {templateUploading ? 'Uploading...' : (editMode ? 'Update Standard' : 'Create Standard')}
                 </button>
               </div>
             </form>

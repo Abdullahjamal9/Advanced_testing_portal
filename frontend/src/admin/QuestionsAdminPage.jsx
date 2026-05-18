@@ -5,7 +5,19 @@ import { useTheme } from '../contexts/ThemeContext';
 import '../PTIS_App.css';
 
 const QuestionsAdminPage = ({ onBack, showToast }) => {
+  const API_BASE_URL = (() => {
+    const envBase = (process.env.REACT_APP_API_BASE_URL || '').replace(/\/$/, '');
+    if (envBase) return envBase;
+    if (process.env.NODE_ENV === 'development') return '';
+    if (typeof window !== 'undefined') {
+      return `${window.location.protocol}//${window.location.hostname}:3001`;
+    }
+    return '';
+  })();
   const { theme, isDarkMode } = useTheme();
+  const [viewportWidth, setViewportWidth] = useState(() =>
+    typeof window !== 'undefined' ? window.innerWidth : 1200
+  );
   const [questions, setQuestions] = useState([]);
   const [standards, setStandards] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -17,11 +29,22 @@ const QuestionsAdminPage = ({ onBack, showToast }) => {
   const [showExcelUploadModal, setShowExcelUploadModal] = useState(false);
   const [excelData, setExcelData] = useState([]);
   const [excelFile, setExcelFile] = useState(null);
+  const [uploadSummary, setUploadSummary] = useState(null);
+  const [uploadErrors, setUploadErrors] = useState([]);
   const fileInputRef = useRef(null);
   
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1);
+  const [goToPage, setGoToPage] = useState('');
   const itemsPerPage = 50; // Show 50 questions per page
+
+  // True DB counts (from /api/questions/count)
+  const [totalDbCount, setTotalDbCount] = useState(null);
+  const [unmatchedCount, setUnmatchedCount] = useState(null);
+
+  // Bulk selection state
+  const [selectedNos, setSelectedNos] = useState(new Set());
+  const [bulkDeleting, setBulkDeleting] = useState(false);
   
   const [formData, setFormData] = useState({
     Question: '',
@@ -32,6 +55,16 @@ const QuestionsAdminPage = ({ onBack, showToast }) => {
     Answer: '',
     Standard_List: ''
   });
+
+  const isMobile = viewportWidth <= 768;
+  const isTablet = viewportWidth <= 1024;
+  const twoColumnGrid = isMobile ? '1fr' : '1fr 1fr';
+
+  useEffect(() => {
+    const handleResize = () => setViewportWidth(window.innerWidth);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   // Color scheme based on theme
   const colors = {
@@ -56,9 +89,10 @@ const QuestionsAdminPage = ({ onBack, showToast }) => {
 
   const fetchData = async () => {
     try {
-      const [questionsRes, standardsRes] = await Promise.all([
-        fetch('http://localhost:3001/api/questions'),
-        fetch('http://localhost:3001/api/standards')
+      const [questionsRes, standardsRes, countRes] = await Promise.all([
+        fetch(`${API_BASE_URL}/api/questions`),
+        fetch(`${API_BASE_URL}/api/standards`),
+        fetch(`${API_BASE_URL}/api/questions/count`)
       ]);
       
       if (!questionsRes.ok || !standardsRes.ok) {
@@ -69,6 +103,12 @@ const QuestionsAdminPage = ({ onBack, showToast }) => {
         questionsRes.json(),
         standardsRes.json()
       ]);
+
+      if (countRes.ok) {
+        const countData = await countRes.json();
+        setTotalDbCount(countData.total ?? null);
+        setUnmatchedCount(countData.unmatched ?? null);
+      }
       
       // Ensure data is array
       setStandards(Array.isArray(standardsData) ? standardsData : []);
@@ -83,10 +123,24 @@ const QuestionsAdminPage = ({ onBack, showToast }) => {
     }
   };
 
+  // Set of known standard names (trimmed+lowercased) for unmatched detection
+  const knownStandardSet = useMemo(
+    () => new Set(standards.map(s => (s.Standard_List || '').trim().toLowerCase())),
+    [standards]
+  );
+
   const filteredQuestions = useMemo(() => {
     const filtered = questions.filter(q => {
-      const questionStandard = q.Standard_List || q.Standard;
-      const matchesStandard = !filterStandard || questionStandard === filterStandard;
+      const questionStandard = (q.Standard_List || q.Standard || '').trim().toLowerCase();
+      let matchesStandard;
+      if (!filterStandard) {
+        matchesStandard = true;
+      } else if (filterStandard === '__UNMATCHED__') {
+        // Show questions whose standard is empty OR not in the known standards list
+        matchesStandard = !questionStandard || !knownStandardSet.has(questionStandard);
+      } else {
+        matchesStandard = questionStandard === filterStandard.trim().toLowerCase();
+      }
       const matchesSearch = !searchQuery || 
         q.Question?.toLowerCase().includes(searchQuery.toLowerCase()) ||
         q.Opt_A?.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -96,7 +150,7 @@ const QuestionsAdminPage = ({ onBack, showToast }) => {
       return matchesStandard && matchesSearch;
     });
     return filtered;
-  }, [questions, filterStandard, searchQuery]);
+  }, [questions, filterStandard, searchQuery, knownStandardSet]);
 
   // Paginated questions
   const paginatedQuestions = useMemo(() => {
@@ -148,7 +202,7 @@ const QuestionsAdminPage = ({ onBack, showToast }) => {
     }
 
     try {
-      const response = await fetch(`http://localhost:3001/api/questions/${questionNo}`, {
+      const response = await fetch(`${API_BASE_URL}/api/questions/${questionNo}`, {
         method: 'DELETE'
       });
       
@@ -161,12 +215,82 @@ const QuestionsAdminPage = ({ onBack, showToast }) => {
     }
   };
 
+  const handleBulkDelete = async () => {
+    if (selectedNos.size === 0) return;
+    if (!window.confirm(`Are you sure you want to delete ${selectedNos.size} selected question(s)? This cannot be undone.`)) return;
+    setBulkDeleting(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/questions/bulk`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nos: Array.from(selectedNos) })
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Bulk delete failed');
+      if (showToast) showToast(`${data.deleted} question(s) deleted successfully!`, 'success');
+      setSelectedNos(new Set());
+      fetchData();
+    } catch (error) {
+      console.error('Bulk delete error:', error);
+      if (showToast) showToast('Failed to delete selected questions', 'error');
+    } finally {
+      setBulkDeleting(false);
+    }
+  };
+
+  const handleSelectAll = (checked) => {
+    if (checked) {
+      setSelectedNos(new Set(filteredQuestions.map(q => q.NO)));
+    } else {
+      setSelectedNos(new Set());
+    }
+  };
+
+  const handleRowSelect = (no, checked) => {
+    setSelectedNos(prev => {
+      const next = new Set(prev);
+      if (checked) next.add(no);
+      else next.delete(no);
+      return next;
+    });
+  };
+
+  const exportCSV = () => {
+    const source = selectedNos.size > 0
+      ? filteredQuestions.filter(q => selectedNos.has(q.NO))
+      : filteredQuestions;
+    if (source.length === 0) { if (showToast) showToast('No questions to export', 'error'); return; }
+    const header = ['NO', 'Question', 'Opt_A', 'Opt_B', 'Opt_C', 'Opt_D', 'Answer', 'Standard'];
+    const rows = source.map(q => [
+      q.NO,
+      `"${String(q.Question || '').replace(/"/g, '""')}"`,
+      `"${String(q.Opt_A || '').replace(/"/g, '""')}"`,
+      `"${String(q.Opt_B || '').replace(/"/g, '""')}"`,
+      `"${String(q.Opt_C || '').replace(/"/g, '""')}"`,
+      `"${String(q.Opt_D || '').replace(/"/g, '""')}"`,
+      q.Answer,
+      `"${String(q.Standard_List || q.Standard || '').replace(/"/g, '""')}"`
+    ]);
+    const csvContent = [header.join(','), ...rows.map(r => r.join(','))].join('\r\n');
+    const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    const label = filterStandard && filterStandard !== '__UNMATCHED__' ? filterStandard : 'All';
+    link.download = `Questions_${label}_${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    if (showToast) showToast(`${source.length} questions exported!`, 'success');
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
 
     try {
       if (editMode) {
-        const response = await fetch(`http://localhost:3001/api/questions/${currentQuestion}`, {
+        const response = await fetch(`${API_BASE_URL}/api/questions/${currentQuestion}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(formData)
@@ -178,7 +302,7 @@ const QuestionsAdminPage = ({ onBack, showToast }) => {
         }
         if (showToast) showToast('Question updated successfully!', 'success');
       } else {
-        const response = await fetch('http://localhost:3001/api/questions', {
+        const response = await fetch(`${API_BASE_URL}/api/questions`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(formData)
@@ -238,6 +362,8 @@ const QuestionsAdminPage = ({ onBack, showToast }) => {
           
           setExcelData(jsonData);
           setShowExcelUploadModal(true);
+          setUploadSummary(null);
+          setUploadErrors([]);
         }
       } catch (error) {
         console.error('Error parsing Excel:', error);
@@ -260,7 +386,7 @@ const QuestionsAdminPage = ({ onBack, showToast }) => {
       setLoading(true);
       console.log('Uploading', excelData.length, 'questions...');
       
-      const response = await fetch('http://localhost:3001/api/questions/bulk', {
+      const response = await fetch(`${API_BASE_URL}/api/questions/bulk`, {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
@@ -279,14 +405,32 @@ const QuestionsAdminPage = ({ onBack, showToast }) => {
 
       const result = await response.json();
       console.log('Upload Result:', result);
-      
-      if (showToast) showToast(`Successfully Added ${result.success} Questions!${result.failed > 0 ? ` Failed: ${result.failed}` : ''}`, 'success');
-      
-      setShowExcelUploadModal(false);
-      setExcelData(null);
-      setExcelFile(null);
-      if (fileInputRef.current) fileInputRef.current.value = '';
+
+      setUploadSummary({
+        success: result.success || 0,
+        failed: result.failed || 0,
+        total: result.total || excelData.length
+      });
+      setUploadErrors(Array.isArray(result.errors) ? result.errors : []);
+
+      if (showToast) {
+        const toastType = result.failed > 0 ? 'info' : 'success';
+        showToast(
+          `Successfully Added ${result.success} Questions!${result.failed > 0 ? ` Failed: ${result.failed}` : ''}`,
+          toastType
+        );
+      }
+
       fetchData();
+
+      if (!result.failed) {
+        setShowExcelUploadModal(false);
+        setExcelData(null);
+        setExcelFile(null);
+        if (fileInputRef.current) fileInputRef.current.value = '';
+        setUploadSummary(null);
+        setUploadErrors([]);
+      }
     } catch (error) {
       console.error('Error Uploading Questions:', error);
       if (showToast) showToast(`Failed To Upload Questions: ${error.message || 'Unknown Error'}`, 'error');
@@ -403,13 +547,18 @@ const QuestionsAdminPage = ({ onBack, showToast }) => {
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M9 11H3m6 0a3 3 0 0 1 6 0m-6 0a3 3 0 0 0 6 0m6 0h-6"></path>
             </svg>
-            {filteredQuestions.length} / {questions.length} Questions
+            {filteredQuestions.length} / {totalDbCount != null ? totalDbCount : questions.length} Questions
+            {totalDbCount != null && unmatchedCount > 0 && (
+              <span style={{ fontSize: '0.78em', opacity: 0.8, marginLeft: '4px' }}>
+                ({unmatchedCount} unmatched)
+              </span>
+            )}
           </span>
         </div>
         
         {/* Filter Content */}
         <div style={{ padding: '25px' }}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(200px, 1fr) minmax(300px, 2fr)', gap: '20px', marginBottom: '20px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : isTablet ? '1fr' : 'minmax(200px, 1fr) minmax(300px, 2fr)', gap: '20px', marginBottom: '20px' }}>
             <div>
               <label style={{ 
                 display: 'flex',
@@ -460,6 +609,9 @@ const QuestionsAdminPage = ({ onBack, showToast }) => {
                     {std.Standard_List}
                   </option>
                 ))}
+                <option value="__UNMATCHED__">
+                  ⚠ Unmatched Standard {unmatchedCount != null ? `(${unmatchedCount})` : ''}
+                </option>
               </select>
             </div>
             <div>
@@ -529,37 +681,184 @@ const QuestionsAdminPage = ({ onBack, showToast }) => {
             </div>
           </div>
           
-          {/* Clear Button */}
-          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+          {/* Buttons Row: Clear Filter + Export CSV + Bulk Delete */}
+          <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
+
+            {/* Export CSV Button */}
+            <button
+              onClick={exportCSV}
+              title={selectedNos.size > 0 ? `Export ${selectedNos.size} selected questions` : `Export all ${filteredQuestions.length} filtered questions`}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                padding: '10px 20px',
+                backgroundColor: '#16a085',
+                color: 'white',
+                border: '2px solid #16a085',
+                borderRadius: '22px',
+                cursor: 'pointer',
+                fontSize: '14px',
+                fontWeight: '600',
+                transition: 'all 0.3s ease',
+                boxShadow: '0 4px 12px rgba(22, 160, 133, 0.3)',
+                position: 'relative',
+                overflow: 'hidden'
+              }}
+              onMouseOver={e => {
+                e.currentTarget.style.backgroundColor = '#f5f5f5';
+                e.currentTarget.style.color = '#16a085';
+                e.currentTarget.style.borderColor = '#16a085';
+                e.currentTarget.style.boxShadow = '0 6px 16px rgba(22, 160, 133, 0.4)';
+                e.currentTarget.style.transform = 'translateY(-2px)';
+              }}
+              onMouseOut={e => {
+                e.currentTarget.style.backgroundColor = '#16a085';
+                e.currentTarget.style.color = 'white';
+                e.currentTarget.style.borderColor = '#16a085';
+                e.currentTarget.style.boxShadow = '0 4px 12px rgba(22, 160, 133, 0.3)';
+                e.currentTarget.style.transform = 'translateY(0)';
+              }}
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                <polyline points="7 10 12 15 17 10"></polyline>
+                <line x1="12" y1="15" x2="12" y2="3"></line>
+              </svg>
+              {selectedNos.size > 0 ? `Export Selected (${selectedNos.size})` : `Export CSV (${filteredQuestions.length})`}
+            </button>
+
+            {/* Bulk Delete Button — only when rows selected */}
+            {selectedNos.size > 0 && (
+              <button
+                onClick={handleBulkDelete}
+                disabled={bulkDeleting}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  padding: '10px 20px',
+                  background: bulkDeleting ? '#aaa' : 'linear-gradient(120deg, #c0392b, #e74c3c)',
+                  color: 'white',
+                  border: '2px solid transparent',
+                  borderRadius: '22px',
+                  cursor: bulkDeleting ? 'not-allowed' : 'pointer',
+                  fontSize: '14px',
+                  fontWeight: '600',
+                  transition: 'all 0.3s ease',
+                  boxShadow: bulkDeleting ? 'none' : '0 4px 12px rgba(192, 57, 43, 0.3)',
+                  position: 'relative',
+                  overflow: 'hidden'
+                }}
+                onMouseOver={e => {
+                  if (!bulkDeleting) {
+                    e.currentTarget.style.background = '#f5f5f5';
+                    e.currentTarget.style.color = '#c0392b';
+                    e.currentTarget.style.border = '2px solid #c0392b';
+                    e.currentTarget.style.boxShadow = '0 6px 16px rgba(192, 57, 43, 0.4)';
+                    e.currentTarget.style.transform = 'translateY(-2px)';
+                  }
+                }}
+                onMouseOut={e => {
+                  if (!bulkDeleting) {
+                    e.currentTarget.style.background = 'linear-gradient(120deg, #c0392b, #e74c3c)';
+                    e.currentTarget.style.color = 'white';
+                    e.currentTarget.style.border = '2px solid transparent';
+                    e.currentTarget.style.boxShadow = '0 4px 12px rgba(192, 57, 43, 0.3)';
+                    e.currentTarget.style.transform = 'translateY(0)';
+                  }
+                }}
+              >
+                <Trash2 size={18} />
+                {bulkDeleting ? 'Deleting…' : `Delete Selected (${selectedNos.size})`}
+              </button>
+            )}
+
+            {/* Clear Selection — only when rows selected */}
+            {selectedNos.size > 0 && (
+              <button
+                onClick={() => setSelectedNos(new Set())}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  padding: '10px 20px',
+                  backgroundColor: colors.inputBg,
+                  color: colors.textMuted,
+                  border: `2px solid ${colors.inputBorder}`,
+                  borderRadius: '22px',
+                  cursor: 'pointer',
+                  fontSize: '14px',
+                  fontWeight: '600',
+                  transition: 'all 0.3s ease',
+                  boxShadow: '0 4px 12px rgba(0,0,0,0.06)',
+                  position: 'relative',
+                  overflow: 'hidden'
+                }}
+                onMouseOver={e => {
+                  e.currentTarget.style.borderColor = '#7f8c8d';
+                  e.currentTarget.style.color = colors.text;
+                  e.currentTarget.style.transform = 'translateY(-2px)';
+                }}
+                onMouseOut={e => {
+                  e.currentTarget.style.borderColor = colors.inputBorder;
+                  e.currentTarget.style.color = colors.textMuted;
+                  e.currentTarget.style.transform = 'translateY(0)';
+                }}
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="18" y1="6" x2="6" y2="18"></line>
+                  <line x1="6" y1="6" x2="18" y2="18"></line>
+                </svg>
+                Clear Selection ({selectedNos.size})
+              </button>
+            )}
+
+            {/* Clear Filter */}
             <button
               onClick={() => { setFilterStandard(''); setSearchQuery(''); }}
               disabled={!filterStandard && !searchQuery}
               style={{
-                padding: '12px 24px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                padding: '10px 20px',
                 backgroundColor: colors.inputBg,
                 color: colors.textMuted,
                 border: `2px solid ${colors.inputBorder}`,
-                borderRadius: '28px',
+                borderRadius: '22px',
                 cursor: (filterStandard || searchQuery) ? 'pointer' : 'not-allowed',
-                fontSize: '0.95em',
-                fontWeight: '500',
-                transition: 'all 0.2s ease',
-                opacity: (filterStandard || searchQuery) ? 1 : 0.5
+                fontSize: '14px',
+                fontWeight: '600',
+                transition: 'all 0.3s ease',
+                boxShadow: '0 4px 12px rgba(0,0,0,0.06)',
+                opacity: (filterStandard || searchQuery) ? 1 : 0.5,
+                position: 'relative',
+                overflow: 'hidden'
               }}
               onMouseOver={e => {
                 if (filterStandard || searchQuery) {
                   e.currentTarget.style.borderColor = '#c0392b';
                   e.currentTarget.style.color = '#c0392b';
                   e.currentTarget.style.backgroundColor = colors.cardBg;
+                  e.currentTarget.style.transform = 'translateY(-2px)';
                 }
               }}
               onMouseOut={e => {
                 e.currentTarget.style.borderColor = colors.inputBorder;
                 e.currentTarget.style.color = colors.textMuted;
                 e.currentTarget.style.backgroundColor = colors.inputBg;
+                e.currentTarget.style.transform = 'translateY(0)';
               }}
             >
-              Clear All Filters
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="3 6 5 6 21 6"></polyline>
+                <path d="M19 6l-1 14H6L5 6"></path>
+                <path d="M10 11v6"></path>
+                <path d="M14 11v6"></path>
+                <path d="M9 6V4h6v2"></path>
+              </svg>
+              Clear Filter
             </button>
           </div>
         </div>
@@ -733,7 +1032,16 @@ overflow: 'hidden',
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr style={{ backgroundColor: colors.tableHeaderBg, color: 'white' }}>
-                <th style={{ padding: '15px', textAlign: 'left', border: `1px solid ${colors.border}`, width: '60px' }}>NO</th>
+                <th style={{ padding: '15px', textAlign: 'center', border: `1px solid ${colors.border}`, width: '44px' }}>
+                  <input
+                    type="checkbox"
+                    title="Select all visible questions"
+                    checked={filteredQuestions.length > 0 && filteredQuestions.every(q => selectedNos.has(q.NO))}
+                    onChange={e => handleSelectAll(e.target.checked)}
+                    style={{ width: '16px', height: '16px', cursor: 'pointer', accentColor: '#3b82f6' }}
+                  />
+                </th>
+                <th style={{ padding: '15px', textAlign: 'left', border: `1px solid ${colors.border}`, width: '60px' }}>S.No.</th>
                 <th style={{ padding: '15px', textAlign: 'left', border: `1px solid ${colors.border}` }}>Question</th>
                 <th style={{ padding: '15px', textAlign: 'left', border: `1px solid ${colors.border}`, width: '150px' }}>Standard</th>
                 <th style={{ padding: '15px', textAlign: 'left', border: `1px solid ${colors.border}`, width: '80px' }}>Answer</th>
@@ -742,8 +1050,18 @@ overflow: 'hidden',
             </thead>
             <tbody>
               {paginatedQuestions.map((question, index) => (
-                <tr key={question.NO} style={{ borderBottom: `1px solid ${colors.border}` }}>
-                  <td style={{ padding: '12px', border: `1px solid ${colors.border}`, color: colors.text }}>{question.NO}</td>
+                <tr key={question.NO} style={{ borderBottom: `1px solid ${colors.border}`, backgroundColor: selectedNos.has(question.NO) ? (isDarkMode ? '#1e3a5f' : '#eff6ff') : 'inherit' }}>
+                  <td style={{ padding: '12px', textAlign: 'center', border: `1px solid ${colors.border}` }}>
+                    <input
+                      type="checkbox"
+                      checked={selectedNos.has(question.NO)}
+                      onChange={e => handleRowSelect(question.NO, e.target.checked)}
+                      style={{ width: '16px', height: '16px', cursor: 'pointer', accentColor: '#3b82f6' }}
+                    />
+                  </td>
+                  <td style={{ padding: '12px', border: `1px solid ${colors.border}`, color: colors.text }}>
+                    {(currentPage - 1) * itemsPerPage + index + 1}
+                  </td>
                   <td style={{ padding: '12px', border: `1px solid ${colors.border}` }}>
                     <div style={{ fontWeight: 'bold', marginBottom: '8px', color: colors.text }}>{question.Question}</div>
                     <div style={{ fontSize: '13px', color: colors.textMuted, lineHeight: '1.6' }}>
@@ -818,7 +1136,7 @@ overflow: 'hidden',
               ))}
               {filteredQuestions.length === 0 && (
                 <tr>
-                  <td colSpan={5} style={{ padding: '30px', textAlign: 'center', color: colors.textMuted }}>
+                  <td colSpan={6} style={{ padding: '30px', textAlign: 'center', color: colors.textMuted }}>
                     No questions found matching your filters.
                   </td>
                 </tr>
@@ -834,10 +1152,10 @@ overflow: 'hidden',
             justifyContent: 'center',
             alignItems: 'center',
             gap: '10px',
-            marginTop: '20px',
-            padding: '15px',
+            flexWrap: 'wrap',
+            padding: '14px 16px',
             backgroundColor: colors.cardBg,
-            borderRadius: '15px'
+            borderTop: `1px solid ${colors.border}`
           }}>
             <button
               onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
@@ -865,6 +1183,54 @@ overflow: 'hidden',
             }}>
               Page {currentPage} of {totalPages} ({filteredQuestions.length} questions)
             </span>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span style={{ color: colors.textMuted, fontWeight: '600', fontSize: '12px' }}>Go to</span>
+              <input
+                type="number"
+                min="1"
+                max={totalPages}
+                value={goToPage}
+                onChange={(e) => setGoToPage(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key !== 'Enter') return;
+                  const nextPage = parseInt(goToPage, 10);
+                  if (!Number.isFinite(nextPage)) return;
+                  setCurrentPage(Math.min(totalPages, Math.max(1, nextPage)));
+                  setGoToPage('');
+                }}
+                style={{
+                  width: '70px',
+                  padding: '6px 10px',
+                  border: `1px solid ${colors.border}`,
+                  borderRadius: '8px',
+                  fontSize: '14px',
+                  textAlign: 'center',
+                  backgroundColor: colors.cardAltBg,
+                  color: colors.text
+                }}
+              />
+              <button
+                onClick={() => {
+                  const nextPage = parseInt(goToPage, 10);
+                  if (!Number.isFinite(nextPage)) return;
+                  setCurrentPage(Math.min(totalPages, Math.max(1, nextPage)));
+                  setGoToPage('');
+                }}
+                style={{
+                  padding: '6px 12px',
+                  backgroundColor: '#1a1a2e',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '8px',
+                  cursor: 'pointer',
+                  fontWeight: '600',
+                  fontSize: '13px'
+                }}
+              >
+                Go
+              </button>
+            </div>
             
             <button
               onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
@@ -906,10 +1272,10 @@ overflow: 'hidden',
         }}>
           <div style={{
             backgroundColor: colors.modalBg,
-            padding: '35px',
+            padding: isMobile ? '22px 16px' : '35px',
             borderRadius: '28px',
             width: '100%',
-            maxWidth: '700px',
+            maxWidth: isMobile ? '100%' : '700px',
             maxHeight: '90vh',
             overflowY: 'auto',
             boxShadow: '0 20px 60px rgba(0, 0, 0, 0.3)',
@@ -1002,7 +1368,7 @@ overflow: 'hidden',
                 />
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px', marginBottom: '22px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: twoColumnGrid, gap: '15px', marginBottom: '22px' }}>
                 <div>
                   <label style={{ 
                     display: 'block', 
@@ -1174,7 +1540,7 @@ overflow: 'hidden',
                 </select>
               </div>
 
-              <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '30px' }}>
+              <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '30px', flexWrap: 'wrap' }}>
                 <button
                   type="button"
                   onClick={() => setShowModal(false)}
@@ -1187,6 +1553,7 @@ overflow: 'hidden',
                     cursor: 'pointer',
                     fontSize: '15px',
                     fontWeight: '600',
+                    width: isMobile ? '100%' : 'auto',
                     transition: 'all 0.2s ease'
                   }}
                   onMouseOver={e => (e.currentTarget.style.borderColor = '#c0392b', e.currentTarget.style.color = '#c0392b')}
@@ -1205,6 +1572,7 @@ overflow: 'hidden',
                     cursor: 'pointer',
                     fontSize: '15px',
                     fontWeight: '600',
+                    width: isMobile ? '100%' : 'auto',
                     transition: 'all 0.2s ease'
                   }}
                   onMouseOver={(e) => {
@@ -1243,7 +1611,7 @@ overflow: 'hidden',
         }}>
           <div style={{
             backgroundColor: colors.modalBg,
-            padding: '35px',
+            padding: isMobile ? '20px 14px' : '35px',
             borderRadius: '28px',
             maxWidth: '95%',
             maxHeight: '90vh',
@@ -1283,6 +1651,20 @@ overflow: 'hidden',
                 {excelData.length} Questions Found In File
               </p>
             </div>
+
+            {uploadSummary && (
+              <div style={{
+                padding: '12px 16px',
+                borderRadius: '12px',
+                marginBottom: '20px',
+                backgroundColor: uploadSummary.failed > 0 ? '#fff3cd' : '#e8f5e9',
+                border: `1px solid ${uploadSummary.failed > 0 ? '#ffeeba' : '#81c784'}`,
+                color: uploadSummary.failed > 0 ? '#856404' : '#2e7d32',
+                fontWeight: '600'
+              }}>
+                Upload Summary: {uploadSummary.success} success, {uploadSummary.failed} failed (Total {uploadSummary.total})
+              </div>
+            )}
 
             {/* Preview Table */}
             <div style={{
@@ -1357,11 +1739,55 @@ overflow: 'hidden',
               </table>
             </div>
 
+            {uploadErrors.length > 0 && (
+              <div style={{
+                marginBottom: '24px'
+              }}>
+                <h3 style={{
+                  margin: '0 0 12px 0',
+                  color: colors.text,
+                  fontSize: '18px',
+                  fontWeight: '700'
+                }}>
+                  Failed Questions (Reason)
+                </h3>
+                <div style={{
+                  maxHeight: '260px',
+                  overflowY: 'auto',
+                  border: `1px solid ${colors.inputBorder}`,
+                  borderRadius: '12px'
+                }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                    <thead style={{ backgroundColor: colors.cardAltBg }}>
+                      <tr>
+                        <th style={{ padding: '10px 8px', textAlign: 'left', width: '60px' }}>Row</th>
+                        <th style={{ padding: '10px 8px', textAlign: 'left', width: '220px' }}>Reason</th>
+                        <th style={{ padding: '10px 8px', textAlign: 'left' }}>Question</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {uploadErrors.map((errItem, idx) => (
+                        <tr key={`${errItem.row || idx}-${idx}`} style={{
+                          borderBottom: `1px solid ${colors.inputBorder}`,
+                          backgroundColor: idx % 2 === 0 ? colors.cardBg : colors.cardAltBg
+                        }}>
+                          <td style={{ padding: '8px', color: colors.textMuted }}>{errItem.row ?? '-'}</td>
+                          <td style={{ padding: '8px', color: colors.text }}>{errItem.error || 'Unknown error'}</td>
+                          <td style={{ padding: '8px', color: colors.text }}>{errItem.question || 'N/A'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
             {/* Action Buttons */}
             <div style={{
               display: 'flex',
               gap: '12px',
-              justifyContent: 'flex-end'
+              justifyContent: 'flex-end',
+              flexWrap: 'wrap'
             }}>
               <button
                 type="button"
@@ -1369,6 +1795,8 @@ overflow: 'hidden',
                   setShowExcelUploadModal(false);
                   setExcelData(null);
                   setExcelFile(null);
+                  setUploadSummary(null);
+                  setUploadErrors([]);
                 }}
                 style={{
                   padding: '12px 28px',
@@ -1379,6 +1807,7 @@ overflow: 'hidden',
                   cursor: 'pointer',
                   fontSize: '15px',
                   fontWeight: '600',
+                  width: isMobile ? '100%' : 'auto',
                   transition: 'all 0.2s ease'
                 }}
                 onMouseOver={e => {
@@ -1404,6 +1833,7 @@ overflow: 'hidden',
                   cursor: 'pointer',
                   fontSize: '15px',
                   fontWeight: '600',
+                  width: isMobile ? '100%' : 'auto',
                   transition: 'all 0.2s ease',
                   boxShadow: '0 4px 12px rgba(39, 174, 96, 0.3)',
                   display: 'flex',

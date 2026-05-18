@@ -1,8 +1,13 @@
 import React from 'react';
 import TestingModule from './TestingModule';
+import { ThemeProvider } from './contexts/ThemeContext';
 
 export default function App() {
-  return <TestingModule />;
+  return (
+    <ThemeProvider>
+      <TestingModule />
+    </ThemeProvider>
+  );
 }
 
 

@@ -35,6 +35,7 @@ import StandardsAdminPage from './admin/StandardsAdminPage';
 import QuestionsAdminPage from './admin/QuestionsAdminPage';
 import ptisLogo from './assets/ptisLogo.png';
 import './LoginPage.css';
+import { addToast, removeToast, subscribeToasts, getToastsSnapshot } from './utils/toastStore';
 
 // Toast Notification Component
 const Toast = ({ message, type = 'info', onClose, isDarkMode }) => {
@@ -54,13 +55,14 @@ const Toast = ({ message, type = 'info', onClose, isDarkMode }) => {
   }, [onClose]);
 
   const getToastStyles = () => {
+    const isNarrowViewport = typeof window !== 'undefined' && window.innerWidth <= 768;
     const baseStyles = {
       position: 'fixed',
-      top: '20px',
-      right: isVisible ? '20px' : '-400px',
+      top: isNarrowViewport ? '12px' : '20px',
+      right: isVisible ? (isNarrowViewport ? '12px' : '20px') : '-400px',
       zIndex: 999999,
-      minWidth: '300px',
-      maxWidth: '450px',
+      minWidth: isNarrowViewport ? 'calc(100vw - 24px)' : '300px',
+      maxWidth: isNarrowViewport ? 'calc(100vw - 24px)' : '450px',
       padding: '12px 16px',
       borderRadius: '10px',
       display: 'flex',
@@ -145,6 +147,26 @@ const Toast = ({ message, type = 'info', onClose, isDarkMode }) => {
   );
 };
 
+const ToastHost = ({ isDarkMode }) => {
+  const [toasts, setToasts] = useState(() => getToastsSnapshot());
+
+  useEffect(() => subscribeToasts(setToasts), []);
+
+  return (
+    <>
+      {toasts.map((toast) => (
+        <Toast
+          key={toast.id}
+          message={toast.message}
+          type={toast.type}
+          onClose={() => removeToast(toast.id)}
+          isDarkMode={isDarkMode}
+        />
+      ))}
+    </>
+  );
+};
+
 // HomePage Component - Moved outside to prevent re-creation
 const HomePage = React.memo(({ 
   activeLoginForm, 
@@ -171,10 +193,12 @@ const HomePage = React.memo(({
   showToast
 }) => (
   <div className="login-backdrop">
+    <div className="login-backdrop-grid"></div>
     <div className="login-main-container">
       {/* Left Side - Branding */}
       <div className="login-right-container">
         <div className="orbit-ring"></div>
+        <div className="orbit-ring-2"></div>
         <div className="glow-pulse"></div>
         
         <div className="branding-content">
@@ -237,6 +261,7 @@ const HomePage = React.memo(({
                 }}
                 autoComplete="off"
                 disabled={!dataLoaded}
+                style={{ backgroundColor: 'rgba(255, 255, 255, 0.08)', color: '#ffffff', border: '1px solid rgba(255, 255, 255, 0.12)' }}
               />
             </div>
 
@@ -251,7 +276,8 @@ const HomePage = React.memo(({
                   opacity: 1, 
                   cursor: 'default',
                   backgroundColor: 'rgba(255, 255, 255, 0.08)',
-                  color: '#ffffff'
+                  color: '#ffffff',
+                  border: '1px solid rgba(255, 255, 255, 0.12)'
                 }}
               />
             </div>
@@ -263,6 +289,7 @@ const HomePage = React.memo(({
                 value={selectedStandard}
                 onChange={(e) => handleStandardSelect(e.target.value)}
                 disabled={!dataLoaded}
+                style={{ backgroundColor: 'rgba(255, 255, 255, 0.08)', color: '#ffffff', border: '1px solid rgba(255, 255, 255, 0.12)' }}
               >
                 <option value="">{standards.length === 0 ? 'Loading standards...' : 'Select Standard'}</option>
                 {standards.map(std => (
@@ -338,7 +365,7 @@ const HomePage = React.memo(({
                   value={adminPassword}
                   onChange={(e) => setAdminPassword(e.target.value)}
                   autoComplete="off"
-                  style={{ paddingRight: '45px' }}
+                  style={{ paddingRight: '45px', backgroundColor: 'rgba(255, 255, 255, 0.08)', color: '#ffffff', border: '1px solid rgba(255, 255, 255, 0.12)' }}
                 />
                 <button
                   type="button"
@@ -407,20 +434,43 @@ const HomePage = React.memo(({
 ));
 
 const TestingModule = () => {
-  const API_BASE_URL = 'http://localhost:3001';
+  const API_BASE_URL = useMemo(() => {
+    const envBase = (process.env.REACT_APP_API_BASE_URL || '').replace(/\/$/, '');
+    if (envBase) return envBase;
+
+    // In CRA dev, keep empty base to use package.json proxy.
+    if (process.env.NODE_ENV === 'development') return '';
+
+    // In shared/deployed static hosting, fall back to same host on backend port.
+    if (typeof window !== 'undefined') {
+      return `${window.location.protocol}//${window.location.hostname}:3001`;
+    }
+
+    return '';
+  }, []);
   const { theme, isDarkMode, toggleTheme } = useTheme();
 
-  // Toast State
-  const [toasts, setToasts] = useState([]);
+  const [viewportWidth, setViewportWidth] = useState(() =>
+    typeof window !== 'undefined' ? window.innerWidth : 1200
+  );
+
+  useEffect(() => {
+    const handleResize = () => setViewportWidth(window.innerWidth);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  const isMobile = viewportWidth <= 768;
+  const isTablet = viewportWidth <= 1024;
+  const contentMaxWidth = isTablet ? '100%' : '1200px';
+  const twoColumnGrid = isMobile ? '1fr' : '1fr 1fr';
+  const dashboardFourCol = isMobile ? '1fr' : isTablet ? 'repeat(2, 1fr)' : 'repeat(4, 1fr)';
+  const dashboardTwoCol = isMobile ? '1fr' : 'repeat(2, 1fr)';
 
   // Toast Helper Function
   const showToast = useCallback((message, type = 'info') => {
-    const id = Date.now();
-    setToasts(prev => [...prev, { id, message, type }]);
-  }, []);
-
-  const removeToast = useCallback((id) => {
-    setToasts(prev => prev.filter(toast => toast.id !== id));
+    const id = Date.now() + Math.floor(Math.random() * 1000);
+    addToast({ id, message, type });
   }, []);
 
   // State
@@ -461,9 +511,6 @@ const TestingModule = () => {
   const [activeLoginForm, setActiveLoginForm] = useState('employee'); // 'employee' or 'admin'
   const [adminActiveTab, setAdminActiveTab] = useState('dashboard'); // 'dashboard', 'results', 'standards', 'questions', 'employees'
   
-  // Certificate generation certification type state (stores cert type per result)
-  const [certTypes, setCertTypes] = useState({}); // key: result index, value: 'New' or 'Recertification'
-
   // --- Add/Update Employee states (Admin)
   const [newEmpId, setNewEmpId] = useState('');
   const [newEmpName, setNewEmpName] = useState('');
@@ -553,6 +600,76 @@ const TestingModule = () => {
     return `${day}-${month}-${year} ${hour}:${minute}:${second} ${ampm}`;
   };
 
+  const getPakistanDateTimeInputs = (dateValue = new Date()) => {
+    const formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Asia/Karachi',
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    });
+
+    const parts = formatter.formatToParts(dateValue);
+    const map = Object.fromEntries(parts.map(({ type, value }) => [type, value]));
+
+    return {
+      dateInput: `${map.year}-${map.month}-${map.day}`,
+      timeInput: `${map.hour}:${map.minute}`,
+    };
+  };
+
+  const parseResultDateTimeInputs = (dateTimeValue) => {
+    const defaults = getPakistanDateTimeInputs();
+    const rawValue = String(dateTimeValue || '').trim();
+    if (!rawValue) return defaults;
+
+    const match12Hour = rawValue.match(
+      /^(\d{1,2})-(\d{1,2})-(\d{4})\s+(\d{1,2}):(\d{2})(?::\d{2})?\s*(AM|PM)$/i
+    );
+
+    if (match12Hour) {
+      const [, dayRaw, monthRaw, yearRaw, hourRaw, minuteRaw, periodRaw] = match12Hour;
+      let hour24 = parseInt(hourRaw, 10);
+      const period = periodRaw.toUpperCase();
+
+      if (period === 'PM' && hour24 !== 12) hour24 += 12;
+      if (period === 'AM' && hour24 === 12) hour24 = 0;
+
+      return {
+        dateInput: `${yearRaw}-${monthRaw.padStart(2, '0')}-${dayRaw.padStart(2, '0')}`,
+        timeInput: `${String(hour24).padStart(2, '0')}:${minuteRaw}`,
+      };
+    }
+
+    const parsed = new Date(rawValue);
+    if (!Number.isNaN(parsed.getTime())) {
+      return getPakistanDateTimeInputs(parsed);
+    }
+
+    return defaults;
+  };
+
+  const composeResultDateTime = (dateInput, timeInput) => {
+    if (!dateInput || !timeInput) return '';
+
+    const [year, month, day] = dateInput.split('-');
+    const [hourRaw, minuteRaw] = timeInput.split(':');
+
+    const hour24 = parseInt(hourRaw, 10);
+    const minute = parseInt(minuteRaw, 10);
+
+    if (!year || !month || !day || !Number.isFinite(hour24) || !Number.isFinite(minute)) {
+      return '';
+    }
+
+    const period = hour24 >= 12 ? 'PM' : 'AM';
+    const hour12 = hour24 % 12 === 0 ? 12 : hour24 % 12;
+
+    return `${day}-${month}-${year} ${String(hour12).padStart(2, '0')}:${String(minute).padStart(2, '0')}:00 ${period}`;
+  };
+
   // Initial data
   const loadInitialData = async () => {
     setLoading(true);
@@ -595,6 +712,22 @@ const TestingModule = () => {
     }
     let processedData = [...data];
 
+    const dedupeQuestions = (items) => {
+      const seen = new Set();
+      const unique = [];
+      for (const item of items) {
+        const key = String(item?.Question || '')
+          .replace(/\s+/g, ' ')
+          .trim()
+          .toLowerCase();
+        if (!key) continue;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        unique.push(item);
+      }
+      return unique;
+    };
+
     const stdNorm = normalizeStandard(standard);
     const isCumulative = stdNorm.includes('cumulative') || stdNorm.includes('cummulative');
 
@@ -604,10 +737,10 @@ const TestingModule = () => {
         const stData = await fetchData(`/questions?standard=${encodeURIComponent(st.Standard_List)}`);
         allQuestions = [...allQuestions, ...stData];
       }
-      processedData = shuffle(allQuestions).slice(0, 50);
+      processedData = shuffle(dedupeQuestions(allQuestions)).slice(0, 50);
     } else {
       if (processedData.length > 0) {
-        processedData = shuffle(processedData);
+        processedData = shuffle(dedupeQuestions(processedData));
       }
     }
 
@@ -642,6 +775,7 @@ const TestingModule = () => {
 
   // ---- Focus guard for Employee ID input (prevents focus loss on re-renders)
   const idInputRef = useRef(null);
+  const isCompletingTestRef = useRef(false);
 
   const handleStartTest = () => {
     if (!selectedEmployee || !selectedStandard) {
@@ -663,6 +797,7 @@ const TestingModule = () => {
     setSkipped([]);
     setIsReviewingSkipped(false);
     setTestCompleted(false);
+    isCompletingTestRef.current = false;
     setSelectedAnswer(null);
     setError('');
   };
@@ -749,6 +884,12 @@ const TestingModule = () => {
   };
 
   const handleTestComplete = async (finalAnswers = null) => {
+    if (isCompletingTestRef.current) {
+      console.log('Test completion already in progress. Ignoring duplicate trigger.');
+      return;
+    }
+
+    isCompletingTestRef.current = true;
     setTestStarted(false);
     setTestCompleted(true);
 
@@ -781,7 +922,7 @@ const TestingModule = () => {
     const rawScore = hasNegativeMarking ? right - (wrong * 0.25) : right;
     const finalScore = Math.max(0, rawScore);
     const percentage = totalQuestions > 0 ? (finalScore / totalQuestions) * 100 : 0;
-    const status = percentage >= (testInfo?.Passing_Criteria || 70) ? 'Pass' : 'Fail';
+    const status = percentage >= (testInfo?.Passing_Criteria || 75) ? 'Pass' : 'Fail';
 
     // Use STANDARD consistently (DB column is STANDARD)
     const result = {
@@ -791,9 +932,9 @@ const TestingModule = () => {
       CORRECT_ANSWER: right,
       WRONG_ANSWER: wrong,
       PERCENTAGE: `${percentage.toFixed(2)}%`,
-      PASSING_CRITERIA: String(testInfo?.Passing_Criteria || 70).includes('%')
+      PASSING_CRITERIA: String(testInfo?.Passing_Criteria || 75).includes('%')
         ? String(testInfo?.Passing_Criteria)
-        : `${testInfo?.Passing_Criteria || 70}%`,
+        : `${testInfo?.Passing_Criteria || 75}%`,
       STATUS: status,
       STANDARD: selectedStandard,
       DATE: getPakistanDateTime(),
@@ -839,6 +980,32 @@ const TestingModule = () => {
     }
   };
 
+  const getResultRowSignature = (row = {}) => [
+    row.ID ?? '',
+    row.NAME ?? '',
+    row.STANDARD ?? '',
+    row.DATE ?? '',
+    row.STATUS ?? '',
+    row.PERCENTAGE ?? '',
+    row.TOTAL_QUESTION ?? '',
+    row.CORRECT_ANSWER ?? '',
+    row.WRONG_ANSWER ?? '',
+    row.HAS_PRACTICAL_ATTACHMENT ?? '',
+    row.PRACTICAL_ATTACHMENT_NAME ?? '',
+  ].join('|');
+
+  const areResultListsEqual = (prevResults = [], nextResults = []) => {
+    if (prevResults.length !== nextResults.length) return false;
+
+    for (let i = 0; i < prevResults.length; i++) {
+      if (getResultRowSignature(prevResults[i]) !== getResultRowSignature(nextResults[i])) {
+        return false;
+      }
+    }
+
+    return true;
+  };
+
   const loadResults = useCallback(async (showLoader = false) => {
     if (showLoader) setAdminLoading(true);
 
@@ -861,13 +1028,33 @@ const TestingModule = () => {
       return Date.UTC(yyyy, mm, dd, hh - 5, +mi, +ss);
     };
 
-    // Ascending so the latest appears LAST
-    resultsData.sort((a, b) => toEpochFromPk(a.DATE) - toEpochFromPk(b.DATE));
+    // Ascending so the oldest appears first; tie-breakers keep order deterministic.
+    resultsData.sort((a, b) => {
+      const epochDiff = toEpochFromPk(a.DATE) - toEpochFromPk(b.DATE);
+      if (epochDiff !== 0) return epochDiff;
+
+      const aKey = `${a.ID ?? ''}|${a.STANDARD ?? ''}|${a.NAME ?? ''}`;
+      const bKey = `${b.ID ?? ''}|${b.STANDARD ?? ''}|${b.NAME ?? ''}`;
+      return aKey.localeCompare(bKey);
+    });
 
     console.log('Loaded results:', resultsData);
-    setResults(resultsData);
+    setResults((prevResults) =>
+      areResultListsEqual(prevResults, resultsData) ? prevResults : resultsData
+    );
     if (showLoader) setAdminLoading(false);
   }, [fetchData]);
+
+  // Keep results fresh while admin is actively viewing the Test Results tab.
+  useEffect(() => {
+    if (!(isAdmin && currentPage === 'admin' && adminActiveTab === 'results')) return;
+
+    const intervalId = setInterval(() => {
+      loadResults(false);
+    }, 10000);
+
+    return () => clearInterval(intervalId);
+  }, [isAdmin, currentPage, adminActiveTab, loadResults]);
 
   const saveResult = async (resultData) => {
     try {
@@ -942,16 +1129,6 @@ const TestingModule = () => {
     return resp.json();
   };
 
-  const updateEmployee = async ({ ID, Name }) => {
-    const resp = await fetch(`${API_BASE_URL}/api/employees/${encodeURIComponent(ID)}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ Name })
-    });
-    if (!resp.ok) throw new Error(await resp.text());
-    return resp.json();
-  };
-
   const deleteEmployee = async (ID) => {
     const resp = await fetch(`${API_BASE_URL}/api/employees/${encodeURIComponent(ID)}`, {
       method: 'DELETE'
@@ -964,19 +1141,19 @@ const TestingModule = () => {
   // Timer
   useEffect(() => {
     let interval;
-    if (testStarted && timeRemaining > 0 && !testCompleted) {
+    if (testStarted && !testCompleted && timeRemaining > 0) {
       interval = setInterval(() => {
-        setTimeRemaining(prev => {
-          if (prev <= 1) {
-            handleTestComplete();
-            return 0;
-          }
-          return prev - 1;
-        });
+        setTimeRemaining(prev => Math.max(0, prev - 1));
       }, 1000);
     }
     return () => clearInterval(interval);
   }, [testStarted, timeRemaining, testCompleted]);
+
+  useEffect(() => {
+    if (testStarted && !testCompleted && timeRemaining === 0) {
+      handleTestComplete();
+    }
+  }, [testStarted, testCompleted, timeRemaining]);
 
   const formatTime = (seconds) => {
     const s = Math.max(0, Number.isFinite(seconds) ? Math.floor(seconds) : 0);
@@ -997,7 +1174,7 @@ const TestingModule = () => {
       backgroundColor: '#fff',
       borderRadius: '18px',
       boxShadow: '0 4px 15px rgba(0,0,0,0.1)',
-      padding: '30px',
+      padding: isMobile ? '20px' : '30px',
       textAlign: 'center'
     },
     button: {
@@ -1104,17 +1281,16 @@ const TestingModule = () => {
           right: 0,
           zIndex: 1000
         }}>
-          <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '15px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
+          <div style={{ maxWidth: contentMaxWidth, margin: '0 auto', padding: isMobile ? '12px' : '15px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: isMobile ? 'wrap' : 'nowrap', gap: isMobile ? '10px' : 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? '10px' : '15px', flexWrap: isMobile ? 'wrap' : 'nowrap' }}>
               <div style={{
-                backgroundColor: theme.bg.card,
-                border: `2px solid ${theme.border.default}`,
+                backgroundColor: '#ffffff',
+                border: '2px solid #ffffff',
                 borderRadius: '25px',
                 padding: '5px',
                 display: 'inline-flex',
                 alignItems: 'center',
-                justifyContent: 'center',
-                overflow: 'hidden'
+                justifyContent: 'center'
               }}>
                 <img 
                   src={ptisLogo} 
@@ -1126,14 +1302,14 @@ const TestingModule = () => {
                   }} 
                 />
               </div>
-              <h1 style={{ fontSize: '1.5em', fontWeight: 'bold', color: '#fff', margin: 0 }}>
+              <h1 style={{ fontSize: isMobile ? '1.2em' : '1.5em', fontWeight: 'bold', color: '#fff', margin: 0 }}>
                 PTIS Test
               </h1>
               <span style={{ background: 'linear-gradient(120deg, #c0392b, #e74c3c)', color: '#fff', padding: '5px 15px', borderRadius: '28px', fontSize: '0.9em', fontWeight: 'bold' }}>
                 {selectedStandard}
               </span>
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? '10px' : '20px', flexWrap: isMobile ? 'wrap' : 'nowrap', width: isMobile ? '100%' : 'auto', justifyContent: isMobile ? 'space-between' : 'flex-end' }}>
               <button
                 onClick={toggleTheme}
                 style={{
@@ -1156,11 +1332,11 @@ const TestingModule = () => {
               </button>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#fff' }}>
                 <Clock size={20} />
-                <span style={{ fontFamily: 'monospace', fontSize: '1.2em', fontWeight: 'bold' }}>
+                <span style={{ fontFamily: 'monospace', fontSize: isMobile ? '1em' : '1.2em', fontWeight: 'bold' }}>
                   {formatTime(timeRemaining)}
                 </span>
               </div>
-              <span style={{ backgroundColor: 'rgba(255,255,255,0.2)', color: '#fff', padding: '5px 15px', borderRadius: '28px', fontSize: '0.9em' }}>
+              <span style={{ backgroundColor: 'rgba(255,255,255,0.2)', color: '#fff', padding: isMobile ? '5px 10px' : '5px 15px', borderRadius: '28px', fontSize: isMobile ? '0.8em' : '0.9em' }}>
                 {isReviewingSkipped
                   ? `Review ${currentQuestion + 1} of ${questions.length} skipped`
                   : `Question ${currentQuestion + 1} of ${originalQuestions.length} (Attempted: ${attemptedCount})`}
@@ -1169,7 +1345,7 @@ const TestingModule = () => {
           </div>
         </div>
 
-        <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '30px 20px' }}>
+        <div style={{ maxWidth: contentMaxWidth, margin: '0 auto', padding: isMobile ? '20px 12px' : '30px 20px' }}>
           {isReviewingSkipped && (
             <div style={{ backgroundColor: '#fff3cd', border: '1px solid #ffeaa7', borderRadius: '8px', padding: '15px', marginBottom: '25px', textAlign: 'center' }}>
               <AlertCircle size={20} style={{ verticalAlign: 'middle', marginRight: '8px', color: '#856404' }} />
@@ -1188,10 +1364,10 @@ const TestingModule = () => {
             </div>
           )}
 
-          <div style={{ backgroundColor: theme.bg.card, borderRadius: '16px', boxShadow: `0 4px 20px ${isDarkMode ? 'rgba(0,0,0,0.3)' : 'rgba(0,0,0,0.1)'}`, padding: '30px', marginBottom: '25px', border: `1px solid ${theme.border.light}` }}>
+          <div style={{ backgroundColor: theme.bg.card, borderRadius: '16px', boxShadow: `0 4px 20px ${isDarkMode ? 'rgba(0,0,0,0.3)' : 'rgba(0,0,0,0.1)'}`, padding: isMobile ? '18px' : '30px', marginBottom: '25px', border: `1px solid ${theme.border.light}` }}>
             {question ? (
               <>
-                <h2 style={{ fontSize: '1.4em', fontWeight: '600', marginBottom: '25px', color: theme.text.primary, lineHeight: '1.4' }}>
+                <h2 style={{ fontSize: isMobile ? '1.15em' : '1.4em', fontWeight: '600', marginBottom: '25px', color: theme.text.primary, lineHeight: '1.4' }}>
                   {wasSkipped && !isReviewingSkipped && (
                     <span style={{ color: '#c0392b', fontSize: '0.8em', marginRight: '10px' }}>⏭ SKIPPED</span>
                   )}
@@ -1209,14 +1385,14 @@ const TestingModule = () => {
                         style={{
                           width: '100%',
                           textAlign: 'left',
-                          padding: '18px',
+                          padding: isMobile ? '14px' : '18px',
                           border: `2px solid ${isSelected ? theme.accent.primary : theme.border.default}`,
                           borderRadius: '28px',
                           backgroundColor: isSelected ? (isDarkMode ? 'rgba(192, 57, 43, 0.2)' : '#ecf0f1') : theme.bg.card,
                           transition: 'all 0.3s ease',
                           display: 'flex',
                           alignItems: 'flex-start',
-                          gap: '15px',
+                          gap: isMobile ? '10px' : '15px',
                           cursor: 'pointer',
                           fontSize: '1em'
                         }}
@@ -1307,20 +1483,36 @@ const TestingModule = () => {
       setError('');
       setTestStarted(false);
       setTestCompleted(false);
+      isCompletingTestRef.current = false;
     };
 
+    const resultPassed = testResult.STATUS?.toUpperCase() === 'PASS';
+    const resultPageBackground = isDarkMode
+      ? 'linear-gradient(135deg, #0f172a 0%, #111827 45%, #1f2937 100%)'
+      : 'linear-gradient(135deg, #f5f6f5 0%, #e6f0fa 100%)';
+    const statusPanelBg = isDarkMode
+      ? (resultPassed ? 'rgba(46, 204, 113, 0.12)' : 'rgba(231, 76, 60, 0.14)')
+      : (resultPassed ? '#e8f5e8' : '#fadbd8');
+    const statusPanelBorder = isDarkMode
+      ? (resultPassed ? '1px solid rgba(46, 204, 113, 0.55)' : '1px solid rgba(231, 76, 60, 0.65)')
+      : `2px solid ${resultPassed ? '#c8e6c9' : '#c0392b'}`;
+    const statusPanelShadow = isDarkMode
+      ? (resultPassed ? '0 0 20px rgba(46, 204, 113, 0.15)' : '0 0 20px rgba(231, 76, 60, 0.18)')
+      : (resultPassed ? 'none' : '0 0 20px rgba(192, 57, 43, 0.2)');
+
     return (
-      <div style={{ minHeight: '100vh', height: '100%', background: 'linear-gradient(135deg, #f5f6f5 0%, #e6f0fa 100%)' }}>
-        <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '40px 20px' }}>
+      <div style={{ minHeight: '100vh', height: '100%', background: resultPageBackground }}>
+        <div style={{ maxWidth: contentMaxWidth, margin: '0 auto', padding: isMobile ? '24px 12px' : '40px 20px' }}>
           <div style={{
             backgroundColor: colors.cardBg,
             borderRadius: '24px',
-            boxShadow: '0 8px 30px rgba(0,0,0,0.12)',
-            padding: '40px',
-            marginBottom: '30px'
+            boxShadow: isDarkMode ? '0 8px 30px rgba(0,0,0,0.35)' : '0 8px 30px rgba(0,0,0,0.12)',
+            padding: isMobile ? '22px 16px' : '40px',
+            marginBottom: '30px',
+            border: `1px solid ${theme.border.default}`
           }}>
             <div style={{ textAlign: 'center', marginBottom: '40px' }}>
-              {testResult.STATUS?.toUpperCase() === 'PASS' ? (
+              {resultPassed ? (
                 <>
                   <CheckCircle size={80} color="#27ae60" style={{ marginBottom: '20px' }} />
                   <h1 style={{
@@ -1328,11 +1520,11 @@ const TestingModule = () => {
                     fontWeight: 'bold',
                     color: '#27ae60',
                     margin: '0 0 10px',
-                    textShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                    textShadow: isDarkMode ? 'none' : '0 2px 4px rgba(0,0,0,0.1)'
                   }}>
                     Congratulations!
                   </h1>
-                  <p style={{ fontSize: '1.2em', color: colors.textMuted, margin: 0 }}>
+                  <p style={{ fontSize: '1.2em', color: theme.text.secondary, margin: 0 }}>
                     You Have Successfully Passed The Test
                   </p>
                 </>
@@ -1344,11 +1536,11 @@ const TestingModule = () => {
                     fontWeight: 'bold',
                     color: '#c0392b',
                     margin: '0 0 10px',
-                    textShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                    textShadow: isDarkMode ? 'none' : '0 2px 4px rgba(0,0,0,0.1)'
                   }}>
                     Test Not Passed
                   </h1>
-                  <p style={{ fontSize: '1.2em', color: colors.textMuted, margin: 0 }}>
+                  <p style={{ fontSize: '1.2em', color: theme.text.secondary, margin: 0 }}>
                     Please Review And Try Again
                   </p>
                 </>
@@ -1357,8 +1549,8 @@ const TestingModule = () => {
 
             <div style={{
               display: 'grid',
-              gridTemplateColumns: '1fr 1fr',
-              gap: '30px',
+              gridTemplateColumns: twoColumnGrid,
+              gap: isMobile ? '16px' : '30px',
               marginBottom: '40px'
             }}>
               <div style={{
@@ -1371,12 +1563,12 @@ const TestingModule = () => {
                   fontSize: '1.3em',
                   fontWeight: 'bold',
                   marginBottom: '20px',
-                  color: '#1a1a2e',
+                  color: theme.text.primary,
                   display: 'flex',
                   alignItems: 'center',
                   gap: '10px'
                 }}>
-                  <User size={24} color="#1a1a2e" />
+                  <User size={24} color={theme.text.primary} />
                   Employee Information
                 </h3>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
@@ -1388,7 +1580,7 @@ const TestingModule = () => {
                     borderBottom: `1px solid ${colors.inputBorder}`
                   }}>
                     <span style={{ color: colors.textMuted, fontWeight: '500' }}>Employee ID:</span>
-                    <span style={{ fontWeight: 'bold', color: '#1a1a2e', fontSize: '1.1em' }}>
+                    <span style={{ fontWeight: 'bold', color: theme.text.primary, fontSize: '1.1em' }}>
                       {testResult.ID}
                     </span>
                   </div>
@@ -1400,7 +1592,7 @@ const TestingModule = () => {
                     borderBottom: `1px solid ${colors.inputBorder}`
                   }}>
                     <span style={{ color: colors.textMuted, fontWeight: '500' }}>Name:</span>
-                    <span style={{ fontWeight: 'bold', color: '#1a1a2e', fontSize: '1.1em' }}>
+                    <span style={{ fontWeight: 'bold', color: theme.text.primary, fontSize: '1.1em' }}>
                       {testResult.NAME}
                     </span>
                   </div>
@@ -1415,7 +1607,8 @@ const TestingModule = () => {
                     <span style={{
                       fontWeight: 'bold',
                       color: '#fff',
-                      backgroundColor: '#1a1a2e',
+                      backgroundColor: isDarkMode ? '#1f2937' : '#1a1a2e',
+                      border: `1px solid ${theme.border.default}`,
                       padding: '6px 12px',
                       borderRadius: '24px',
                       fontSize: '0.9em'
@@ -1430,7 +1623,7 @@ const TestingModule = () => {
                     padding: '12px 0'
                   }}>
                     <span style={{ color: colors.textMuted, fontWeight: '500' }}>Test Date:</span>
-                    <span style={{ fontWeight: 'bold', color: '#1a1a2e', fontSize: '1.1em' }}>
+                    <span style={{ fontWeight: 'bold', color: theme.text.primary, fontSize: '1.1em' }}>
                       {testResult.DATE}
                     </span>
                   </div>
@@ -1438,22 +1631,22 @@ const TestingModule = () => {
               </div>
 
               <div style={{
-                backgroundColor: testResult.STATUS?.toUpperCase() === 'PASS' ? '#e8f5e8' : '#fadbd8',
-                borderRadius: '8px',
+                backgroundColor: statusPanelBg,
+                borderRadius: '28px',
                 padding: '25px',
-                border: `2px solid ${testResult.STATUS?.toUpperCase() === 'PASS' ? '#c8e6c9' : '#c0392b'}`,
-                boxShadow: testResult.STATUS?.toUpperCase() !== 'PASS' ? '0 0 20px rgba(192, 57, 43, 0.2)' : 'none'
+                border: statusPanelBorder,
+                boxShadow: statusPanelShadow
               }}>
                 <h3 style={{
                   fontSize: '1.3em',
                   fontWeight: 'bold',
                   marginBottom: '20px',
-                  color: '#1a1a2e',
+                  color: theme.text.primary,
                   display: 'flex',
                   alignItems: 'center',
                   gap: '10px'
                 }}>
-                  <BarChart3 size={24} color="#1a1a2e" />
+                  <BarChart3 size={24} color={theme.text.primary} />
                   Test Results
                 </h3>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
@@ -1465,7 +1658,7 @@ const TestingModule = () => {
                     borderBottom: `1px solid ${colors.inputBorder}`
                   }}>
                     <span style={{ color: colors.textMuted, fontWeight: '500' }}>Total Questions:</span>
-                    <span style={{ fontWeight: 'bold', color: '#1a1a2e', fontSize: '1.2em' }}>
+                    <span style={{ fontWeight: 'bold', color: theme.text.primary, fontSize: '1.2em' }}>
                       {testResult.TOTAL_QUESTION}
                     </span>
                   </div>
@@ -1517,7 +1710,7 @@ const TestingModule = () => {
                     borderBottom: `1px solid ${colors.inputBorder}`
                   }}>
                     <span style={{ color: colors.textMuted, fontWeight: '500' }}>Final Score:</span>
-                    <span style={{ fontWeight: 'bold', color: '#1a1a2e', fontSize: '1.1em' }}>
+                    <span style={{ fontWeight: 'bold', color: theme.text.primary, fontSize: '1.1em' }}>
                       {testResult.FINAL_SCORE} / {testResult.TOTAL_QUESTION}
                     </span>
                   </div>
@@ -1535,8 +1728,8 @@ const TestingModule = () => {
                     <span style={{
                       fontSize: '2.2em',
                       fontWeight: 'bold',
-                      color: testResult.STATUS?.toUpperCase() === 'PASS' ? '#27ae60' : '#e74c3c',
-                      textShadow: '0 1px 3px rgba(0,0,0,0.1)'
+                      color: resultPassed ? '#27ae60' : '#e74c3c',
+                      textShadow: isDarkMode ? 'none' : '0 1px 3px rgba(0,0,0,0.1)'
                     }}>
                       {testResult.PERCENTAGE}
                     </span>
@@ -1567,6 +1760,7 @@ const TestingModule = () => {
                   ...commonStyles.button,
                   fontSize: '1.2em',
                   padding: '15px 40px',
+                  width: isMobile ? '100%' : 'auto',
                   background: 'linear-gradient(120deg, #c0392b, #e74c3c)',
                   boxShadow: '0 4px 15px rgba(192, 57, 43, 0.3)',
                   textTransform: 'none'
@@ -1582,8 +1776,49 @@ const TestingModule = () => {
     );
   };
 
+  // Stable refs so memoized sub-components always read the latest outer-scope values
+  // without relying on stale closure snapshots from a previous TestingModule render.
+  const resultsRef = useRef(results);
+  resultsRef.current = results;
+  const employeesRef = useRef(employees);
+  employeesRef.current = employees;
+  const standardsRef = useRef(standards);
+  standardsRef.current = standards;
+  const themeRef = useRef(theme);
+  themeRef.current = theme;
+  const isDarkModeRef = useRef(isDarkMode);
+  isDarkModeRef.current = isDarkMode;
+  const isMobileRef = useRef(isMobile);
+  isMobileRef.current = isMobile;
+  const colorsRef = useRef(colors);
+  colorsRef.current = colors;
+  const commonStylesRef = useRef(commonStyles);
+  commonStylesRef.current = commonStyles;
+  const adminActiveTabRef = useRef(adminActiveTab);
+  adminActiveTabRef.current = adminActiveTab;
+  const currentPageRef = useRef(currentPage);
+  currentPageRef.current = currentPage;
+  const isAdminRef = useRef(isAdmin);
+  isAdminRef.current = isAdmin;
+  const adminLoadingRef = useRef(adminLoading);
+  adminLoadingRef.current = adminLoading;
+
   // ---------- Admin Page (Professional Dashboard with Sidebar) ----------
-  const AdminPage = () => {
+  const AdminPage = useMemo(() => { return function AdminPageInner() {
+    // Shadow outer-scope variables with fresh values from refs so this component
+    // never remounts on parent state changes (avoids resetting modal/form state).
+    const results = resultsRef.current;
+    const employees = employeesRef.current;
+    const standards = standardsRef.current;
+    const theme = themeRef.current;
+    const isDarkMode = isDarkModeRef.current;
+    const isMobile = isMobileRef.current;
+    const colors = colorsRef.current;
+    const commonStyles = commonStylesRef.current;
+    const adminActiveTab = adminActiveTabRef.current;
+    const currentPage = currentPageRef.current;
+    const isAdmin = isAdminRef.current;
+    const adminLoading = adminLoadingRef.current;
     const norm = useCallback((v) => (v ?? '').toString().trim(), []);
     const normLower = useCallback((v) => norm(v).toLowerCase(), [norm]);
     const isPass = useCallback((status) => normLower(status) === 'pass', [normLower]);
@@ -1634,9 +1869,348 @@ const TestingModule = () => {
     const [filterEmpName, setFilterEmpName] = useState('');
     const [filterStatus, setFilterStatus] = useState('All');
     const [filterStandard, setFilterStandard] = useState('All');
+    const [filterDateFrom, setFilterDateFrom] = useState('');
+    const [filterDateTo, setFilterDateTo] = useState('');
+    const [resultsCurrentPage, setResultsCurrentPage] = useState(1);
+    const [resultsGoToPage, setResultsGoToPage] = useState('');
+    const resultsItemsPerPage = 50;
     const [sidebarHovered, setSidebarHovered] = useState(false);
     const [showHeader, setShowHeader] = useState(true);
     const [lastScrollY, setLastScrollY] = useState(0);
+    const [showAddResultModal, setShowAddResultModal] = useState(false);
+    const [resultSaving, setResultSaving] = useState(false);
+    const [resultEditMode, setResultEditMode] = useState(false);
+    const [resultEditTarget, setResultEditTarget] = useState(null);
+    const [isResultPercentageManuallyEdited, setIsResultPercentageManuallyEdited] = useState(false);
+    const [resultAttachmentFile, setResultAttachmentFile] = useState(null);
+    const resultAttachmentInputRef = useRef(null);
+    const createDefaultResultFormData = () => {
+      const { dateInput, timeInput } = getPakistanDateTimeInputs();
+      return {
+        employeeId: '',
+        employeeName: '',
+        standard: '',
+        totalQuestions: '100',
+        correctAnswers: '',
+        percentage: '',
+        passingCriteria: '75',
+        resultDate: dateInput,
+        resultTime: timeInput
+      };
+    };
+    const [resultFormData, setResultFormData] = useState(createDefaultResultFormData);
+
+    const resultEmployeeIdOptions = useMemo(() => {
+      const ids = new Set(employees.map(emp => String(emp.ID || '')).filter(Boolean));
+      return Array.from(ids).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+    }, [employees]);
+
+    const resultEmployeeNameOptions = useMemo(() => {
+      const names = new Set(employees.map(emp => String(emp.Name || '')).filter(Boolean));
+      return Array.from(names).sort((a, b) => a.localeCompare(b));
+    }, [employees]);
+
+    const resultStandardOptions = useMemo(() => {
+      const std = new Set(standards.map(s => norm(s?.Standard_List)).filter(Boolean));
+      return Array.from(std).sort((a, b) => a.localeCompare(b));
+    }, [standards, norm]);
+
+    const toResultDateKey = useCallback((value) => {
+      const raw = norm(value);
+      if (!raw) return '';
+
+      const dateOnly = raw.split(' ')[0];
+      const normalizeParts = (year, month, day) => {
+        if (!year || !month || !day) return '';
+        return `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+      };
+
+      if (dateOnly.includes('/')) {
+        const parts = dateOnly.split('/');
+        if (parts.length === 3 && parts[2].length === 4) {
+          return normalizeParts(parts[2], parts[1], parts[0]);
+        }
+      } else if (dateOnly.includes('-')) {
+        const parts = dateOnly.split('-');
+        if (parts.length === 3) {
+          if (parts[0].length === 4) {
+            return normalizeParts(parts[0], parts[1], parts[2]);
+          }
+          if (parts[2].length === 4) {
+            return normalizeParts(parts[2], parts[1], parts[0]);
+          }
+        }
+      }
+
+      const fallback = new Date(raw);
+      if (!Number.isNaN(fallback.getTime())) {
+        return normalizeParts(
+          fallback.getFullYear(),
+          fallback.getMonth() + 1,
+          fallback.getDate()
+        );
+      }
+
+      return '';
+    }, [norm]);
+
+    const isNegativeMarkingEnabledForStandard = useCallback((standardName) => {
+      const normalizedStandardName = norm(standardName);
+      if (!normalizedStandardName) return true;
+
+      const standardRow = standards.find(
+        (s) => norm(s?.Standard_List).toLowerCase() === normalizedStandardName.toLowerCase()
+      );
+      const marker = String(standardRow?.Negative_Marking ?? standardRow?.NEGATIVE_MARKING ?? '').trim().toLowerCase();
+      if (!marker) return true;
+      return marker !== 'no' && marker !== 'false' && marker !== '0';
+    }, [standards, norm]);
+
+    const calculateResultFormPercentage = useCallback((totalQuestionsValue, correctAnswersValue, standardName) => {
+      const totalQuestions = parseInt(totalQuestionsValue, 10);
+      const correctAnswers = parseInt(correctAnswersValue, 10);
+
+      if (!Number.isFinite(totalQuestions) || totalQuestions <= 0) return '';
+      if (!Number.isFinite(correctAnswers) || correctAnswers < 0 || correctAnswers > totalQuestions) return '';
+
+      const wrongAnswers = totalQuestions - correctAnswers;
+      const hasNegativeMarking = isNegativeMarkingEnabledForStandard(standardName);
+      const rawScore = hasNegativeMarking ? correctAnswers - (wrongAnswers * 0.25) : correctAnswers;
+      const finalScore = Math.max(0, rawScore);
+      const percentage = (finalScore / totalQuestions) * 100;
+
+      return Number.isFinite(percentage) ? percentage.toFixed(2) : '';
+    }, [isNegativeMarkingEnabledForStandard]);
+
+    const resultStandardForPercentage = useMemo(() => {
+      if (resultEditMode) {
+        return String(resultEditTarget?.STANDARD || resultFormData.standard || '');
+      }
+      return String(resultFormData.standard || '');
+    }, [resultEditMode, resultEditTarget, resultFormData.standard]);
+
+    const resultHasNegativeMarking = useMemo(
+      () => isNegativeMarkingEnabledForStandard(resultStandardForPercentage),
+      [isNegativeMarkingEnabledForStandard, resultStandardForPercentage]
+    );
+
+    useEffect(() => {
+      if (isResultPercentageManuallyEdited) return;
+
+      const autoPercentage = calculateResultFormPercentage(
+        resultFormData.totalQuestions,
+        resultFormData.correctAnswers,
+        resultStandardForPercentage
+      );
+
+      setResultFormData((prev) => (
+        prev.percentage === autoPercentage ? prev : { ...prev, percentage: autoPercentage }
+      ));
+    }, [
+      resultFormData.totalQuestions,
+      resultFormData.correctAnswers,
+      resultStandardForPercentage,
+      isResultPercentageManuallyEdited,
+      calculateResultFormPercentage
+    ]);
+
+    const RESULT_ATTACHMENT_MAX_BYTES = 20 * 1024 * 1024;
+    const resultAllowedAttachmentMimeTypes = new Set([
+      'application/pdf',
+      'application/msword',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    ]);
+    const resultAllowedAttachmentExtensions = new Set(['.pdf', '.doc', '.docx']);
+
+    const resetResultAttachment = useCallback(() => {
+      setResultAttachmentFile(null);
+      if (resultAttachmentInputRef.current) {
+        resultAttachmentInputRef.current.value = '';
+      }
+    }, []);
+
+    const handleResultAttachmentChange = (e) => {
+      const file = e.target.files && e.target.files[0];
+      if (!file) {
+        setResultAttachmentFile(null);
+        return;
+      }
+
+      const ext = `.${String(file.name || '').split('.').pop()}`.toLowerCase();
+      const extOk = resultAllowedAttachmentExtensions.has(ext);
+      const mimeOk = resultAllowedAttachmentMimeTypes.has(file.type);
+
+      if (!extOk && !mimeOk) {
+        showToast('Only PDF, DOC, or DOCX attachments are allowed.', 'error');
+        resetResultAttachment();
+        return;
+      }
+
+      if (file.size > RESULT_ATTACHMENT_MAX_BYTES) {
+        showToast('Attachment must be 20MB or smaller.', 'error');
+        resetResultAttachment();
+        return;
+      }
+
+      setResultAttachmentFile(file);
+    };
+
+    const uploadResultAttachment = async ({ id, standard, date, file }) => {
+      const formDataPayload = new FormData();
+      formDataPayload.append('attachment', file);
+
+      const response = await fetch(
+        `${API_BASE_URL}/api/results/${encodeURIComponent(id)}/${encodeURIComponent(standard)}/${encodeURIComponent(date)}/attachment`,
+        {
+          method: 'POST',
+          body: formDataPayload
+        }
+      );
+
+      if (!response.ok) {
+        const msg = await response.text().catch(() => '');
+        throw new Error(msg || `HTTP ${response.status}`);
+      }
+
+      return response.json();
+    };
+
+    const downloadResultAttachment = async (result) => {
+      const hasAttachment = String(result?.HAS_PRACTICAL_ATTACHMENT) === '1' || result?.HAS_PRACTICAL_ATTACHMENT === 1;
+      if (!hasAttachment) {
+        showToast('No attachment found for this result.', 'info');
+        return;
+      }
+
+      const url = `${API_BASE_URL}/api/results/${encodeURIComponent(result.ID)}/${encodeURIComponent(result.STANDARD)}/${encodeURIComponent(result.DATE)}/attachment`;
+      try {
+        const response = await fetch(url);
+        if (!response.ok) throw new Error('Failed to download attachment');
+
+        const blob = await response.blob();
+        const blobUrl = window.URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        const safeStandard = String(result.STANDARD || 'Result').replace(/[^a-zA-Z0-9_-]+/g, '_');
+        const safeName = String(result.NAME || 'Employee').replace(/[^a-zA-Z0-9_-]+/g, '_');
+        const fallbackName = `Result_Attachment_${result.ID}_${safeStandard}_${safeName}`;
+        const downloadName = result.PRACTICAL_ATTACHMENT_NAME || fallbackName;
+
+        link.href = blobUrl;
+        link.download = downloadName;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        window.URL.revokeObjectURL(blobUrl);
+      } catch (error) {
+        console.error('Error downloading attachment:', error);
+        showToast('Failed to download attachment', 'error');
+      }
+    };
+
+    const removeResultAttachment = async (result) => {
+      const hasAttachment = String(result?.HAS_PRACTICAL_ATTACHMENT) === '1' || result?.HAS_PRACTICAL_ATTACHMENT === 1;
+      if (!hasAttachment) {
+        showToast('No attachment found for this result.', 'info');
+        return;
+      }
+
+      const confirmRemove = window.confirm('Remove this attachment? This cannot be undone.');
+      if (!confirmRemove) return;
+
+      try {
+        const response = await fetch(
+          `${API_BASE_URL}/api/results/${encodeURIComponent(result.ID)}/${encodeURIComponent(result.STANDARD)}/${encodeURIComponent(result.DATE)}/attachment`,
+          { method: 'DELETE' }
+        );
+
+        if (!response.ok) {
+          const msg = await response.text().catch(() => '');
+          throw new Error(msg || `HTTP ${response.status}`);
+        }
+
+        showToast('Attachment removed successfully!', 'success');
+        setResultEditTarget((prev) => prev ? { ...prev, HAS_PRACTICAL_ATTACHMENT: 0, PRACTICAL_ATTACHMENT_NAME: null } : prev);
+        resetResultAttachment();
+        loadResults(true);
+      } catch (error) {
+        console.error('Error removing attachment:', error);
+        showToast('Failed to remove attachment', 'error');
+      }
+    };
+
+    const resetAddResultForm = useCallback(() => {
+      setResultFormData(createDefaultResultFormData());
+      setIsResultPercentageManuallyEdited(false);
+    }, []);
+
+    const closeAddResultModal = useCallback(() => {
+      setShowAddResultModal(false);
+      setResultSaving(false);
+      setResultEditMode(false);
+      setResultEditTarget(null);
+      resetAddResultForm();
+      resetResultAttachment();
+    }, [resetAddResultForm, resetResultAttachment]);
+
+    const openAddResultModal = useCallback(() => {
+      setResultEditMode(false);
+      setResultEditTarget(null);
+      setResultSaving(false);
+      resetAddResultForm();
+      resetResultAttachment();
+      setShowAddResultModal(true);
+    }, [resetAddResultForm, resetResultAttachment]);
+
+    const addResultStatusPreview = useMemo(() => {
+      if (!resultFormData.percentage) return '';
+      const pct = parseFloat(resultFormData.percentage);
+      const passCriteria = parseFloat(resultFormData.passingCriteria);
+      if (!Number.isFinite(pct) || !Number.isFinite(passCriteria)) return '';
+      return pct >= passCriteria ? 'Pass' : 'Fail';
+    }, [resultFormData.percentage, resultFormData.passingCriteria]);
+
+    const hasResultAnswerSheet =
+      resultEditMode &&
+      resultEditTarget &&
+      (String(resultEditTarget.HAS_ANSWER_SHEET) === '1' || resultEditTarget.HAS_ANSWER_SHEET === 1);
+
+    const hasResultAttachment =
+      resultEditMode &&
+      resultEditTarget &&
+      (String(resultEditTarget.HAS_PRACTICAL_ATTACHMENT) === '1' || resultEditTarget.HAS_PRACTICAL_ATTACHMENT === 1);
+
+    const resultAttachmentLocked = hasResultAnswerSheet || hasResultAttachment;
+    const resultAttachmentLockNote = hasResultAnswerSheet
+      ? 'Answer sheet is auto-generated. Attachment upload is disabled.'
+      : hasResultAttachment
+        ? 'Attachment already exists. Remove it to upload a new file.'
+        : '';
+
+    const openEditResultModal = useCallback((result) => {
+      const parsedPercentage = parseFloat(String(result?.PERCENTAGE ?? '').replace('%', ''));
+      const parsedPassingCriteria = parseFloat(String(result?.PASSING_CRITERIA ?? '').replace('%', ''));
+      const totalQuestions = String(result?.TOTAL_QUESTION ?? '100');
+      const correctAnswers = String(result?.CORRECT_ANSWER ?? '');
+      const { dateInput, timeInput } = parseResultDateTimeInputs(result?.DATE);
+
+      setResultEditTarget(result);
+      setResultEditMode(true);
+      setResultSaving(false);
+      setIsResultPercentageManuallyEdited(false);
+      setResultFormData({
+        employeeId: String(result?.ID ?? ''),
+        employeeName: String(result?.NAME ?? ''),
+        standard: String(result?.STANDARD ?? ''),
+        totalQuestions,
+        correctAnswers,
+        percentage: Number.isFinite(parsedPercentage) ? parsedPercentage.toFixed(2) : '',
+        passingCriteria: Number.isFinite(parsedPassingCriteria) ? String(parsedPassingCriteria) : '75',
+        resultDate: dateInput,
+        resultTime: timeInput
+      });
+      resetResultAttachment();
+      setShowAddResultModal(true);
+    }, [resetResultAttachment]);
 
     // Interconnected handlers: ID <-> Name (based on results only)
     const onChangeEmpId = (val) => {
@@ -1658,6 +2232,132 @@ const TestingModule = () => {
       setFilterEmpName('');
       setFilterStatus('All');
       setFilterStandard('All');
+      setFilterDateFrom('');
+      setFilterDateTo('');
+      setResultsCurrentPage(1);
+    };
+
+    const handleAddResultSubmit = async (e) => {
+      e.preventDefault();
+
+      const selectedEmployee = employees.find(emp => String(emp.ID) === String(resultFormData.employeeId));
+      const fallbackEmployee = resultEditMode && resultEditTarget
+        ? { ID: resultEditTarget.ID, Name: resultEditTarget.NAME }
+        : null;
+      const resolvedEmployee = selectedEmployee || fallbackEmployee;
+
+      if (!resolvedEmployee || !resolvedEmployee.ID) {
+        showToast('Please select a valid employee.', 'error');
+        return;
+      }
+
+      const resolvedStandard = resultEditMode
+        ? String(resultEditTarget?.STANDARD || resultFormData.standard || '')
+        : resultFormData.standard;
+
+      if (!resolvedStandard) {
+        showToast('Please select a standard.', 'error');
+        return;
+      }
+
+      const totalQuestions = parseInt(resultFormData.totalQuestions, 10);
+      const correctAnswers = parseInt(resultFormData.correctAnswers, 10);
+      const autoCalculatedPercentage = calculateResultFormPercentage(
+        resultFormData.totalQuestions,
+        resultFormData.correctAnswers,
+        resolvedStandard
+      );
+      const percentageValue = isResultPercentageManuallyEdited
+        ? parseFloat(resultFormData.percentage)
+        : parseFloat(autoCalculatedPercentage || resultFormData.percentage);
+      const passingCriteria = parseFloat(resultFormData.passingCriteria);
+
+      if (!Number.isFinite(totalQuestions) || totalQuestions <= 0) {
+        showToast('Total questions must be greater than 0.', 'error');
+        return;
+      }
+
+      if (!Number.isFinite(correctAnswers) || correctAnswers < 0 || correctAnswers > totalQuestions) {
+        showToast('Correct answers must be between 0 and total questions.', 'error');
+        return;
+      }
+
+      if (!Number.isFinite(percentageValue) || percentageValue < 0 || percentageValue > 100) {
+        showToast('Percentage must be between 0 and 100.', 'error');
+        return;
+      }
+
+      if (!Number.isFinite(passingCriteria) || passingCriteria < 0 || passingCriteria > 100) {
+        showToast('Passing criteria must be between 0 and 100.', 'error');
+        return;
+      }
+
+      const composedDateTime = composeResultDateTime(resultFormData.resultDate, resultFormData.resultTime);
+      if (!composedDateTime) {
+        showToast('Please enter a valid result date and time.', 'error');
+        return;
+      }
+
+      const status = percentageValue >= passingCriteria ? 'Pass' : 'Fail';
+
+      const resultData = {
+        ID: String(resolvedEmployee.ID),
+        NAME: String(resolvedEmployee.Name || resultFormData.employeeName || ''),
+        TOTAL_QUESTION: totalQuestions,
+        CORRECT_ANSWER: correctAnswers,
+        WRONG_ANSWER: totalQuestions - correctAnswers,
+        PERCENTAGE: `${percentageValue.toFixed(2)}%`,
+        PASSING_CRITERIA: `${passingCriteria}%`,
+        STATUS: status,
+        STANDARD: resolvedStandard,
+        DATE: composedDateTime,
+        answers: {},
+        questions: []
+      };
+
+      if (resultEditMode && resultEditTarget?.DATE) {
+        resultData.ORIGINAL_DATE = String(resultEditTarget.DATE);
+      }
+
+      setResultSaving(true);
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/results`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(resultData)
+        });
+
+        if (!response.ok) {
+          throw new Error(resultEditMode ? 'Failed to update result' : 'Failed to add result');
+        }
+
+        if (resultAttachmentFile) {
+          try {
+            await uploadResultAttachment({
+              id: resultData.ID,
+              standard: resultData.STANDARD,
+              date: resultData.DATE,
+              file: resultAttachmentFile
+            });
+            showToast('Attachment uploaded successfully!', 'success');
+          } catch (uploadError) {
+            console.error('Attachment upload error:', uploadError);
+            showToast('Result saved but attachment upload failed.', 'error');
+          }
+        }
+
+        showToast(resultEditMode ? 'Result updated successfully!' : 'Result added successfully!', 'success');
+        // Await the results refresh BEFORE closing the modal so that
+        // re-opening the same record immediately (e.g. to click Download)
+        // already sees HAS_PRACTICAL_ATTACHMENT = 1.
+        await loadResults(true);
+        closeAddResultModal();
+      } catch (err) {
+        console.error('Error adding result:', err);
+        showToast(resultEditMode ? 'Failed to update result' : 'Failed to add result', 'error');
+      } finally {
+        setResultSaving(false);
+      }
     };
 
     // ✅ Re-added: CSV export helper used by the button below
@@ -1697,12 +2397,34 @@ const TestingModule = () => {
     const filteredResults = useMemo(() => {
       return results.filter(r => {
         const matchId = filterEmpId ? String(r.ID) === String(filterEmpId) : true;
-        const matchName = filterEmpName ? norm(r.NAME) === norm(filterEmpName) : true;
+        const matchName = filterEmpName ? normLower(r.NAME) === normLower(filterEmpName) : true;
+        const matchEmployee = filterEmpId ? matchId : (filterEmpName ? matchName : true);
         const matchStatus = filterStatus === 'All' ? true : normLower(r.STATUS) === normLower(filterStatus);
         const matchStd = filterStandard === 'All' ? true : norm(r.STANDARD) === norm(filterStandard);
-        return matchId && matchName && matchStatus && matchStd;
+        const dateKey = toResultDateKey(r.DATE);
+        const matchFrom = filterDateFrom ? (dateKey && dateKey >= filterDateFrom) : true;
+        const matchTo = filterDateTo ? (dateKey && dateKey <= filterDateTo) : true;
+        return matchEmployee && matchStatus && matchStd && matchFrom && matchTo;
       });
-    }, [results, filterEmpId, filterEmpName, filterStatus, filterStandard]);
+    }, [results, filterEmpId, filterEmpName, filterStatus, filterStandard, filterDateFrom, filterDateTo, norm, normLower, toResultDateKey]);
+
+    const paginatedResults = useMemo(() => {
+      const startIndex = (resultsCurrentPage - 1) * resultsItemsPerPage;
+      const endIndex = startIndex + resultsItemsPerPage;
+      return filteredResults.slice(startIndex, endIndex);
+    }, [filteredResults, resultsCurrentPage, resultsItemsPerPage]);
+
+    const totalResultPages = Math.ceil(filteredResults.length / resultsItemsPerPage);
+
+    useEffect(() => {
+      setResultsCurrentPage(1);
+    }, [filterEmpId, filterEmpName, filterStatus, filterStandard, filterDateFrom, filterDateTo]);
+
+    useEffect(() => {
+      if (totalResultPages > 0 && resultsCurrentPage > totalResultPages) {
+        setResultsCurrentPage(totalResultPages);
+      }
+    }, [resultsCurrentPage, totalResultPages]);
 
     // Certificate filtered results
     const certFilteredResults = useMemo(() => {
@@ -1737,16 +2459,24 @@ const TestingModule = () => {
       }
     }, [isAdmin, currentPage]);
 
-    // Scroll detection for header animation
+    // Scroll detection for header animation with throttling
     useEffect(() => {
+      let ticking = false;
+      
       const handleScroll = () => {
-        const currentScrollY = window.scrollY;
-        if (currentScrollY > lastScrollY && currentScrollY > 50) {
-          setShowHeader(false);
-        } else if (currentScrollY < lastScrollY) {
-          setShowHeader(true);
+        if (!ticking) {
+          window.requestAnimationFrame(() => {
+            const currentScrollY = window.scrollY;
+            if (currentScrollY > lastScrollY && currentScrollY > 80) {
+              setShowHeader(false);
+            } else if (currentScrollY < lastScrollY || currentScrollY <= 80) {
+              setShowHeader(true);
+            }
+            setLastScrollY(currentScrollY);
+            ticking = false;
+          });
+          ticking = true;
         }
-        setLastScrollY(currentScrollY);
       };
 
       window.addEventListener('scroll', handleScroll, { passive: true });
@@ -1767,12 +2497,56 @@ const TestingModule = () => {
     // Certificate Management Page Component - Memoized to prevent re-renders on parent state changes
     const CertificatesAdminPage = useMemo(() => {
       return function CertificatesAdminPageInner() {
-        const { theme, isDarkMode } = useTheme();
+        const theme = themeRef.current;
+        const isDarkMode = isDarkModeRef.current;
+        const colors = colorsRef.current;
+        const isMobile = isMobileRef.current;
         const [searchType, setSearchType] = useState('id'); // 'id' or 'name'
         const [searchQuery, setSearchQuery] = useState('');
+        const [certificateCurrentPage, setCertificateCurrentPage] = useState(1);
+        const [certificateGoToPage, setCertificateGoToPage] = useState('');
+        const [certTypes, setCertTypes] = useState({}); // key: stable certificate row id, value: 'New' or 'Recertification'
+        const [previousCertNumbers, setPreviousCertNumbers] = useState({}); // key: stable certificate row id, value: manual previous certificate no
+        const certificateItemsPerPage = 25;
 
       const filteredResults = useMemo(() => {
         let passed = results.filter(r => isPass(r.STATUS));
+
+        const toSortableTimestamp = (value) => {
+          const raw = norm(value);
+          if (!raw) return Number.NEGATIVE_INFINITY;
+
+          const dateOnly = raw.split(' ')[0];
+          let parsedDate = null;
+
+          if (dateOnly.includes('/')) {
+            const parts = dateOnly.split('/');
+            if (parts.length === 3) {
+              parsedDate = new Date(Number(parts[2]), Number(parts[1]) - 1, Number(parts[0]));
+            }
+          } else if (dateOnly.includes('-')) {
+            const parts = dateOnly.split('-');
+            if (parts.length === 3) {
+              if (parts[0].length === 4) {
+                // YYYY-MM-DD
+                parsedDate = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+              } else {
+                // DD-MM-YYYY
+                parsedDate = new Date(Number(parts[2]), Number(parts[1]) - 1, Number(parts[0]));
+              }
+            }
+          }
+
+          if (!parsedDate || Number.isNaN(parsedDate.getTime())) {
+            const fallback = new Date(raw);
+            return Number.isNaN(fallback.getTime()) ? Number.NEGATIVE_INFINITY : fallback.getTime();
+          }
+
+          return parsedDate.getTime();
+        };
+
+        const isNewerResult = (candidate, current) =>
+          toSortableTimestamp(candidate?.DATE) >= toSortableTimestamp(current?.DATE);
         
         if (searchQuery) {
           if (searchType === 'id') {
@@ -1786,37 +2560,39 @@ const TestingModule = () => {
           }
         }
         
-        // Group PT/MPT/UT/VT tests by employee
+        const normalizeCombinedBaseType = (value) => {
+          const raw = norm(value);
+          if (!raw) return null;
+          const lowered = raw.toLowerCase();
+          const hasTag = lowered.includes('general') || lowered.includes('specific') || lowered.includes('practical');
+          if (!hasTag) return null;
+          const base = raw
+            .replace(/\(\s*(general|specific|practical)\s*\)/ig, '')
+            .replace(/\s+(general|specific|practical)\b/ig, '')
+            .trim();
+          return base || null;
+        };
+
+        // Group General/Specific/Practical tests by employee
         const grouped = {};
         passed.forEach(r => {
           const standard = norm(r.STANDARD);
           const empId = norm(r.ID);
-          
-          // Check if this is a 2-row test (PT/MPT/UT/VT) - CHECK MPT/UT/VT BEFORE PT
-          const isMagneticParticle = standard.includes('Magnetic Particle') || standard.includes('MPT (');
-          const isUltrasonic = standard.includes('Ultrasonic') || standard.includes('UT (');
-          const isVisual = standard.includes('Visual') || standard.includes('VT (');
-          const isPenetrantTesting = standard.includes('Penetrant Testing') || standard.includes('PT (');
-          
-          if (isPenetrantTesting || isMagneticParticle || isUltrasonic || isVisual) {
-            // Determine base type - check MPT, UT, VT first to avoid substring matching
-            let baseType;
-            if (isMagneticParticle) baseType = 'Magnetic Particle Testing';
-            else if (isUltrasonic) baseType = 'Ultrasonic Testing';
-            else if (isVisual) baseType = 'Visual Testing';
-            else if (isPenetrantTesting) baseType = 'Penetrant Testing';
-            
+          const standardLower = standard.toLowerCase();
+          const baseType = normalizeCombinedBaseType(standard);
+
+          if (baseType) {
             // Determine test type (General, Specific, or Practical)
             let testType;
-            if (standard.includes('(Practical)')) {
+            if (standardLower.includes('practical')) {
               testType = 'Practical';
-            } else if (standard.includes('General')) {
+            } else if (standardLower.includes('general')) {
               testType = 'General';
-            } else if (standard.includes('Specific')) {
+            } else if (standardLower.includes('specific')) {
               testType = 'Specific';
             }
-            
-            const key = `${empId}_${baseType}`;
+
+            const key = `${empId}_${baseType.toLowerCase()}`;
             
             if (!grouped[key]) {
               grouped[key] = {
@@ -1830,21 +2606,29 @@ const TestingModule = () => {
             }
             
             if (testType === 'General') {
-              grouped[key].general = r;
+              if (!grouped[key].general || isNewerResult(r, grouped[key].general)) {
+                grouped[key].general = r;
+              }
             } else if (testType === 'Specific') {
-              grouped[key].specific = r;
+              if (!grouped[key].specific || isNewerResult(r, grouped[key].specific)) {
+                grouped[key].specific = r;
+              }
             } else if (testType === 'Practical') {
-              grouped[key].practical = r;
+              if (!grouped[key].practical || isNewerResult(r, grouped[key].practical)) {
+                grouped[key].practical = r;
+              }
             }
           } else {
-            // Regular certificate (non-PT/MPT)
+            // Regular certificate (single test)
             const key = `${empId}_${standard}`;
-            grouped[key] = {
-              empId,
-              empName: norm(r.NAME),
-              baseType: standard,
-              single: r
-            };
+            if (!grouped[key] || !grouped[key].single || isNewerResult(r, grouped[key].single)) {
+              grouped[key] = {
+                empId,
+                empName: norm(r.NAME),
+                baseType: standard,
+                single: r
+              };
+            }
           }
         });
         
@@ -1864,8 +2648,15 @@ const TestingModule = () => {
               SPECIFIC_DATA: group.specific
             };
             
-            // Add practical data if available
-            if (group.practical) {
+            // Attach practical only when it belongs to current/latest cycle.
+            // Practical is usually entered later, so same day or later than theory is accepted.
+            const latestTheoryTimestamp = Math.max(
+              toSortableTimestamp(group.general?.DATE),
+              toSortableTimestamp(group.specific?.DATE)
+            );
+            const practicalTimestamp = toSortableTimestamp(group.practical?.DATE);
+
+            if (group.practical && practicalTimestamp >= latestTheoryTimestamp) {
               resultData.PRACTICAL_DATA = group.practical;
             }
             
@@ -1876,6 +2667,25 @@ const TestingModule = () => {
         
         return finalResults;
       }, [searchType, searchQuery, isPass, norm]);
+
+      const totalCertificatePages = Math.ceil(filteredResults.length / certificateItemsPerPage);
+      const paginatedCertificateResults = filteredResults.slice(
+        (certificateCurrentPage - 1) * certificateItemsPerPage,
+        certificateCurrentPage * certificateItemsPerPage
+      );
+
+      const getCertificateRowKey = (result) =>
+        `${norm(result.ID)}|${norm(result.STANDARD)}|${norm(result.DATE)}`;
+
+      useEffect(() => {
+        setCertificateCurrentPage(1);
+      }, [searchType, searchQuery]);
+
+      useEffect(() => {
+        if (totalCertificatePages > 0 && certificateCurrentPage > totalCertificatePages) {
+          setCertificateCurrentPage(totalCertificatePages);
+        }
+      }, [certificateCurrentPage, totalCertificatePages]);
 
       return (
         <div>
@@ -1920,7 +2730,7 @@ const TestingModule = () => {
               alignItems: 'center',
               flexWrap: 'wrap'
             }}>
-            <div style={{ minWidth: '180px' }}>
+            <div style={{ minWidth: isMobile ? '100%' : '180px' }}>
               <select
                 value={searchType}
                 onChange={(e) => setSearchType(e.target.value)}
@@ -1941,7 +2751,7 @@ const TestingModule = () => {
                 <option value="name">Employee Name</option>
               </select>
             </div>
-            <div style={{ flex: '1', minWidth: '250px' }}>
+            <div style={{ flex: '1', minWidth: isMobile ? '100%' : '250px' }}>
               <input
                 type="text"
                 placeholder={`Search by ${searchType === 'id' ? 'Employee ID' : 'Employee Name'}...`}
@@ -1971,17 +2781,23 @@ const TestingModule = () => {
               />
             </div>
             <button
-              onClick={() => setSearchQuery('')}
+              onClick={() => {
+                setSearchQuery('');
+                setCertificateCurrentPage(1);
+              }}
               disabled={!searchQuery}
               style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
                 padding: '12px 24px',
-                backgroundColor: colors.cardBg,
+                backgroundColor: colors.inputBg,
                 color: colors.textMuted,
-                border: `2px solid ${colors.border}`,
+                border: `2px solid ${colors.inputBorder}`,
                 borderRadius: '28px',
                 cursor: searchQuery ? 'pointer' : 'not-allowed',
-                fontSize: '14px',
-                fontWeight: '600',
+                fontSize: '0.95em',
+                fontWeight: '500',
                 opacity: searchQuery ? 1 : 0.5,
                 transition: 'all 0.2s ease'
               }}
@@ -1989,15 +2805,22 @@ const TestingModule = () => {
                 if (searchQuery) {
                   e.currentTarget.style.borderColor = '#c0392b';
                   e.currentTarget.style.color = '#c0392b';
-                  e.currentTarget.style.backgroundColor = isDarkMode ? '#2d1f1f' : '#fff5f5';
+                  e.currentTarget.style.backgroundColor = colors.cardBg;
                 }
               }}
               onMouseOut={(e) => {
-                e.currentTarget.style.borderColor = colors.border;
+                e.currentTarget.style.borderColor = colors.inputBorder;
                 e.currentTarget.style.color = colors.textMuted;
-                e.currentTarget.style.backgroundColor = colors.cardBg;
+                e.currentTarget.style.backgroundColor = colors.inputBg;
               }}
             >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                <polyline points="3 6 5 6 21 6"></polyline>
+                <path d="M19 6l-1 14H6L5 6"></path>
+                <path d="M10 11v6"></path>
+                <path d="M14 11v6"></path>
+                <path d="M9 6V4h6v2"></path>
+              </svg>
               Clear Filter
             </button>
             </div>
@@ -2033,9 +2856,15 @@ const TestingModule = () => {
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredResults.map((result, index) => (
+                    {paginatedCertificateResults.map((result, index) => {
+                      const rowKey = getCertificateRowKey(result);
+                      const rowRenderKey = `${rowKey}|${index}`;
+                      const selectedCertType = certTypes[rowKey] || 'New';
+                      const previousCertNo = previousCertNumbers[rowKey] || '';
+
+                      return (
                       <tr 
-                        key={index}
+                        key={rowRenderKey}
                         style={{ 
                           borderBottom: `1px solid ${colors.border}`,
                           backgroundColor: isDarkMode ? colors.tableRowBg : 'transparent'
@@ -2059,32 +2888,97 @@ const TestingModule = () => {
                         <td style={{ padding: '16px 20px', color: colors.textMuted, textAlign: 'center', fontSize: '0.9em' }}>
                           {norm(result.DATE)}
                         </td>
-                        <td style={{ padding: '16px 20px', textAlign: 'center' }}>
-                          <select
-                            value={certTypes[index] || 'New'}
-                            onChange={(e) => setCertTypes({ ...certTypes, [index]: e.target.value })}
-                            style={{
-                              padding: '8px 12px',
-                              border: certTypes[index] === 'Recertification' ? '2px solid #16213e' : '2px solid #16a085',
-                              borderRadius: '28px',
-                              fontSize: '14px',
-                              fontWeight: '600',
-                              backgroundColor: certTypes[index] === 'Recertification' ? '#16213e' : '#16a085',
-                              color: 'white',
-                              cursor: 'pointer',
-                              outline: 'none',
-                              transition: 'all 0.2s ease'
-                            }}
-                          >
-                            <option value="New" style={{ backgroundColor: theme.bg.input, color: theme.text.primary }}>New</option>
-                            <option value="Recertification" style={{ backgroundColor: theme.bg.input, color: theme.text.primary }}>Re-Certification</option>
-                          </select>
+                        <td style={{ padding: '16px 20px', textAlign: 'center', minWidth: '260px' }}>
+                          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
+                            <select
+                              value={selectedCertType}
+                              onChange={async (e) => {
+                                const nextType = e.target.value;
+                                setCertTypes(prev => ({ ...prev, [rowKey]: nextType }));
+
+                                if (nextType !== 'Recertification') {
+                                  return;
+                                }
+
+                                const existingValue = String(previousCertNumbers[rowKey] || '').trim();
+                                if (existingValue) {
+                                  return;
+                                }
+
+                                try {
+                                  const params = new URLSearchParams({
+                                    emp_id: norm(result.ID),
+                                    standard: norm(result.STANDARD)
+                                  });
+
+                                  const response = await fetch(`${API_BASE_URL}/api/certificates/previous-number?${params.toString()}`);
+                                  if (!response.ok) {
+                                    return;
+                                  }
+
+                                  const data = await response.json();
+                                  const autoFillValue = String(data.previous_certificate_no || '').trim();
+                                  if (!autoFillValue) {
+                                    return;
+                                  }
+
+                                  // Do not overwrite if user typed while request was in-flight.
+                                  setPreviousCertNumbers(prev => {
+                                    if (String(prev[rowKey] || '').trim()) {
+                                      return prev;
+                                    }
+                                    return { ...prev, [rowKey]: autoFillValue };
+                                  });
+                                } catch (autoFillError) {
+                                  console.warn('Previous certificate auto-fill failed:', autoFillError);
+                                }
+                              }}
+                              style={{
+                                padding: '8px 12px',
+                                border: selectedCertType === 'Recertification' ? '2px solid #16213e' : '2px solid #16a085',
+                                borderRadius: '8px',
+                                fontSize: '14px',
+                                fontWeight: '600',
+                                backgroundColor: selectedCertType === 'Recertification' ? '#16213e' : '#16a085',
+                                color: 'white',
+                                cursor: 'pointer',
+                                outline: 'none',
+                                transition: 'all 0.2s ease'
+                              }}
+                            >
+                              <option value="New" style={{ backgroundColor: theme.bg.input, color: theme.text.primary }}>New</option>
+                              <option value="Recertification" style={{ backgroundColor: theme.bg.input, color: theme.text.primary }}>Re-Certification</option>
+                            </select>
+
+                            {selectedCertType === 'Recertification' && (
+                              <input
+                                type="text"
+                                value={previousCertNo}
+                                onChange={(e) => setPreviousCertNumbers(prev => ({ ...prev, [rowKey]: e.target.value }))}
+                                placeholder="Previous Certificate No."
+                                style={{
+                                  width: '220px',
+                                  padding: '7px 10px',
+                                  borderRadius: '8px',
+                                  border: `1px solid ${theme.border.default}`,
+                                  backgroundColor: theme.bg.input,
+                                  color: theme.text.primary,
+                                  fontSize: '13px'
+                                }}
+                              />
+                            )}
+                          </div>
                         </td>
                         <td style={{ padding: '16px 20px', textAlign: 'center' }}>
                           <button
                             onClick={async () => {
                               try {
-                                const selectedCertType = certTypes[index] || 'New';
+                                const trimmedPreviousCertNo = String(previousCertNo || '').trim();
+                                if (selectedCertType === 'Recertification' && !trimmedPreviousCertNo) {
+                                  showToast('Please enter Previous Certificate No. for Re-Certification.', 'error');
+                                  return;
+                                }
+
                                 let certData;
                                 
                                 // Check if this is a combined PT/MPT certificate
@@ -2130,6 +3024,10 @@ const TestingModule = () => {
                                     passing_criteria: norm(result.PASSING_CRITERIA),
                                     certification_type: selectedCertType
                                   };
+                                }
+
+                                if (selectedCertType === 'Recertification') {
+                                  certData.previous_certificate_no = trimmedPreviousCertNo;
                                 }
 
                                 // Call backend API to generate certificate
@@ -2206,25 +3104,135 @@ const TestingModule = () => {
                           </button>
                         </td>
                       </tr>
-                    ))}
+                    )})}
                   </tbody>
                 </table>
+              </div>
+            )}
+
+            {totalCertificatePages > 1 && (
+              <div style={{
+                display: 'flex',
+                justifyContent: 'center',
+                alignItems: 'center',
+                gap: '10px',
+                flexWrap: 'wrap',
+                padding: '14px 16px',
+                backgroundColor: colors.cardBg,
+                borderTop: `1px solid ${colors.border}`
+              }}>
+                <button
+                  onClick={() => setCertificateCurrentPage(prev => Math.max(1, prev - 1))}
+                  disabled={certificateCurrentPage === 1}
+                  style={{
+                    padding: '8px 16px',
+                    backgroundColor: certificateCurrentPage === 1 ? colors.border : '#1a1a2e',
+                    color: certificateCurrentPage === 1 ? colors.textMuted : 'white',
+                    border: 'none',
+                    borderRadius: '8px',
+                    cursor: certificateCurrentPage === 1 ? 'not-allowed' : 'pointer',
+                    fontWeight: '600',
+                    fontSize: '14px',
+                    transition: 'all 0.2s ease'
+                  }}
+                >
+                  Previous
+                </button>
+
+                <span style={{
+                  color: colors.text,
+                  fontWeight: '600',
+                  fontSize: '14px',
+                  padding: '0 10px'
+                }}>
+                  Page {certificateCurrentPage} of {totalCertificatePages} ({filteredResults.length} candidates)
+                </span>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <span style={{ color: colors.textMuted, fontWeight: '600', fontSize: '12px' }}>Go to</span>
+                  <input
+                    type="number"
+                    min="1"
+                    max={totalCertificatePages}
+                    value={certificateGoToPage}
+                    onChange={(e) => setCertificateGoToPage(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key !== 'Enter') return;
+                      const nextPage = parseInt(certificateGoToPage, 10);
+                      if (!Number.isFinite(nextPage)) return;
+                      setCertificateCurrentPage(Math.min(totalCertificatePages, Math.max(1, nextPage)));
+                      setCertificateGoToPage('');
+                    }}
+                    style={{
+                      width: '70px',
+                      padding: '6px 10px',
+                      border: `1px solid ${colors.border}`,
+                      borderRadius: '8px',
+                      fontSize: '14px',
+                      textAlign: 'center',
+                      backgroundColor: colors.cardAltBg,
+                      color: colors.text
+                    }}
+                  />
+                  <button
+                    onClick={() => {
+                      const nextPage = parseInt(certificateGoToPage, 10);
+                      if (!Number.isFinite(nextPage)) return;
+                      setCertificateCurrentPage(Math.min(totalCertificatePages, Math.max(1, nextPage)));
+                      setCertificateGoToPage('');
+                    }}
+                    style={{
+                      padding: '6px 12px',
+                      backgroundColor: '#1a1a2e',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '8px',
+                      cursor: 'pointer',
+                      fontWeight: '600',
+                      fontSize: '13px'
+                    }}
+                  >
+                    Go
+                  </button>
+                </div>
+
+                <button
+                  onClick={() => setCertificateCurrentPage(prev => Math.min(totalCertificatePages, prev + 1))}
+                  disabled={certificateCurrentPage === totalCertificatePages}
+                  style={{
+                    padding: '8px 16px',
+                    backgroundColor: certificateCurrentPage === totalCertificatePages ? colors.border : '#1a1a2e',
+                    color: certificateCurrentPage === totalCertificatePages ? colors.textMuted : 'white',
+                    border: 'none',
+                    borderRadius: '8px',
+                    cursor: certificateCurrentPage === totalCertificatePages ? 'not-allowed' : 'pointer',
+                    fontWeight: '600',
+                    fontSize: '14px',
+                    transition: 'all 0.2s ease'
+                  }}
+                >
+                  Next
+                </button>
               </div>
             )}
           </div>
         </div>
       );
     };
-    }, [norm, isPass, toPctNumber]); // Only recreate if utility functions change
+    }, [norm, isPass, toPctNumber, results]); // Recreate when results change to avoid stale data
 
     return (
       <div style={{ display: 'flex', minHeight: '100vh', backgroundColor: theme.bg.primary }}>
         {/* Sidebar */}
         <div 
-          onMouseEnter={() => setSidebarHovered(true)}
-          onMouseLeave={() => setSidebarHovered(false)}
+          onMouseEnter={() => {
+            if (!isMobile) setSidebarHovered(true);
+          }}
+          onMouseLeave={() => {
+            if (!isMobile) setSidebarHovered(false);
+          }}
           style={{
-          width: sidebarHovered ? '260px' : '80px',
+          width: isMobile ? '64px' : sidebarHovered ? '260px' : '80px',
           backgroundColor: '#1a1a2e',
           boxShadow: '2px 0 10px rgba(0,0,0,0.1)',
           display: 'flex',
@@ -2233,8 +3241,8 @@ const TestingModule = () => {
           height: '100vh',
           left: 0,
           top: 0,
-          borderTopRightRadius: '20px',
-          borderBottomRightRadius: '20px',
+          borderTopRightRadius: isMobile ? '0' : '20px',
+          borderBottomRightRadius: isMobile ? '0' : '20px',
           transition: 'width 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
           overflow: 'hidden',
           willChange: 'width',
@@ -2253,8 +3261,8 @@ const TestingModule = () => {
             <div 
               onClick={() => setAdminActiveTab('dashboard')}
               style={{
-                backgroundColor: theme.bg.card,
-                border: `2px solid ${theme.border.default}`,
+                backgroundColor: '#ffffff',
+                border: '2px solid #ffffff',
                 borderRadius: '25px',
                 padding: '5px',
                 display: 'inline-flex',
@@ -2262,8 +3270,7 @@ const TestingModule = () => {
                 justifyContent: 'center',
                 marginBottom: '10px',
                 cursor: 'pointer',
-                transition: 'transform 0.2s ease, box-shadow 0.2s ease',
-                overflow: 'hidden'
+                transition: 'transform 0.2s ease, box-shadow 0.2s ease'
               }}
               onMouseOver={(e) => {
                 e.currentTarget.style.transform = 'scale(1.05)';
@@ -2306,7 +3313,7 @@ const TestingModule = () => {
                     cursor: 'pointer',
                     display: 'flex',
                     alignItems: 'center',
-                    justifyContent: sidebarHovered ? 'flex-start' : 'center',
+                    justifyContent: !isMobile && sidebarHovered ? 'flex-start' : 'center',
                     gap: '12px',
                     fontSize: '0.95em',
                     fontWeight: isActive ? 'bold' : 'normal',
@@ -2321,7 +3328,7 @@ const TestingModule = () => {
                   }}
                 >
                   <Icon size={20} />
-                  {sidebarHovered && item.label}
+                  {!isMobile && sidebarHovered && item.label}
                 </button>
               );
             })}
@@ -2350,13 +3357,13 @@ const TestingModule = () => {
                 e.currentTarget.querySelector('svg').style.color = '#fff';
               }}
               style={{
-                width: sidebarHovered ? '100%' : '45px',
-                height: sidebarHovered ? 'auto' : '45px',
-                padding: sidebarHovered ? '12px' : '0',
+                width: !isMobile && sidebarHovered ? '100%' : '45px',
+                height: !isMobile && sidebarHovered ? 'auto' : '45px',
+                padding: !isMobile && sidebarHovered ? '12px' : '0',
                 background: 'linear-gradient(120deg, #c0392b, #e74c3c)',
                 color: '#fff',
                 border: '2px solid transparent',
-                borderRadius: sidebarHovered ? '28px' : '25px',
+                borderRadius: !isMobile && sidebarHovered ? '28px' : '25px',
                 cursor: 'pointer',
                 fontSize: '0.95em',
                 fontWeight: 'bold',
@@ -2369,30 +3376,30 @@ const TestingModule = () => {
               }}
             >
               <Home size={18} style={{ transition: 'color 0.3s ease' }} />
-              {sidebarHovered && 'Logout'}
+              {!isMobile && sidebarHovered && 'Logout'}
             </button>
           </div>
         </div>
 
         {/* Main Content Area */}
-        <div style={{ marginLeft: '80px', flex: 1, display: 'flex', flexDirection: 'column' }}>
+        <div style={{ marginLeft: isMobile ? '64px' : '80px', flex: 1, display: 'flex', flexDirection: 'column' }}>
           {/* Top Header Bar */}
           <div style={{
-            backgroundColor: theme.bg.card,
+            backgroundColor: isDarkMode ? '#1a1a2e' : '#ffffff',
             boxShadow: `0 2px 4px ${isDarkMode ? 'rgba(0,0,0,0.3)' : 'rgba(0,0,0,0.1)'}`,
-            padding: '20px 30px',
+            padding: isMobile ? '14px 12px' : '20px 30px',
             borderBottom: '3px solid transparent',
             borderImage: 'linear-gradient(90deg, #c0392b, #e74c3c, #c0392b) 1',
-            borderRadius: '18px',
             position: 'sticky',
             top: 0,
             zIndex: 100,
             transform: showHeader ? 'translateY(0)' : 'translateY(-100%)',
-            transition: 'transform 0.3s ease-in-out'
+            transition: 'transform 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
+            willChange: 'transform'
           }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: isMobile ? 'wrap' : 'nowrap', gap: isMobile ? '12px' : 0 }}>
               <div>
-                <h1 style={{ margin: 0, color: theme.text.primary, fontSize: '1.8em', fontWeight: 'bold' }}>
+                <h1 style={{ margin: 0, color: theme.text.primary, fontSize: isMobile ? '1.2em' : '1.8em', fontWeight: 'bold' }}>
                   {adminActiveTab === 'dashboard' && 'Dashboard Overview'}
                   {adminActiveTab === 'results' && 'Test Results Management'}
                   {adminActiveTab === 'standards' && 'Standards Management'}
@@ -2405,7 +3412,7 @@ const TestingModule = () => {
                   Welcome to PTIS Testing System Admin Panel
                 </p>
               </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap', width: isMobile ? '100%' : 'auto', justifyContent: isMobile ? 'flex-start' : 'flex-end' }}>
                 <button
                   onClick={toggleTheme}
                   style={{
@@ -2425,12 +3432,15 @@ const TestingModule = () => {
                   onMouseLeave={(e) => e.currentTarget.style.background = isDarkMode ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.05)'}
                 >
                   {isDarkMode ? <Sun size={20} /> : <Moon size={20} />}
-                  <span>{isDarkMode ? 'Light Mode' : 'Dark Mode'}</span>
+                  {!isMobile && <span>{isDarkMode ? 'Light Mode' : 'Dark Mode'}</span>}
                 </button>
-                {(adminActiveTab === 'dashboard' || adminActiveTab === 'results' || adminActiveTab === 'certificates') ? null : (
+                {(adminActiveTab === 'dashboard' || adminActiveTab === 'certificates') ? null : (
                 <button
                   onClick={() => {
-                    if (adminActiveTab === 'standards') {
+                    if (adminActiveTab === 'results') {
+                      // Trigger add result
+                      document.getElementById('result-add-btn')?.click();
+                    } else if (adminActiveTab === 'standards') {
                       // Trigger add standard
                       document.getElementById('standards-add-btn')?.click();
                     } else if (adminActiveTab === 'questions') {
@@ -2470,13 +3480,14 @@ const TestingModule = () => {
                     display: 'flex',
                     alignItems: 'center',
                     gap: '8px',
+                    width: isMobile ? '100%' : 'auto',
                     fontSize: '0.95em',
                     fontWeight: 'bold',
                     transition: 'all 0.3s ease'
                   }}
                 >
                   <Plus size={18} style={{ transition: 'color 0.3s ease' }} />
-                  Add New {adminActiveTab === 'standards' ? 'Standard' : adminActiveTab === 'questions' ? 'Question' : adminActiveTab === 'practical' ? 'Practical Result' : 'Employee'}
+                  Add New {adminActiveTab === 'results' ? 'Result' : adminActiveTab === 'standards' ? 'Standard' : adminActiveTab === 'questions' ? 'Question' : adminActiveTab === 'practical' ? 'Practical Result' : 'Employee'}
                 </button>
                 )}
               </div>
@@ -2484,7 +3495,7 @@ const TestingModule = () => {
           </div>
 
           {/* Content Area */}
-          <div style={{ flex: 1, padding: '30px', overflowY: 'auto', backgroundColor: theme.bg.primary, minHeight: '100vh' }}>
+          <div style={{ flex: 1, padding: isMobile ? '16px 12px' : isTablet ? '24px 16px' : '30px', overflowY: 'auto', backgroundColor: theme.bg.primary, minHeight: '100vh' }}>
             {error && (
               <div style={commonStyles.error}>
                 <AlertCircle size={20} />
@@ -2496,7 +3507,7 @@ const TestingModule = () => {
             {adminActiveTab === 'dashboard' && (
               <>
                 {/* KPI Cards */}
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '20px', marginBottom: '30px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: dashboardFourCol, gap: '20px', marginBottom: '30px' }}>
                   <div style={{
                     ...commonStyles.card,
                     background: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)',
@@ -2540,7 +3551,7 @@ const TestingModule = () => {
                 </div>
 
                 {/* Charts Section */}
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '20px', marginBottom: '30px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: dashboardTwoCol, gap: '20px', marginBottom: '30px' }}>
                   {/* Pass/Fail Pie Chart */
                   <div style={{
                     backgroundColor: theme.bg.card,
@@ -2563,13 +3574,13 @@ const TestingModule = () => {
                       <ResponsiveContainer width="100%" height={300}>
                         <PieChart>
                           <defs>
-                            <linearGradient id="passGradient" x1="0" y1="0" x2="1" y2="1">
-                              <stop offset="0%" stopColor="#27ae60" />
-                              <stop offset="100%" stopColor="#2ecc71" />
+                            <linearGradient id="passGradient" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="0%" stopColor="#2ecc71" />
+                              <stop offset="100%" stopColor="#27ae60" />
                             </linearGradient>
-                            <linearGradient id="failGradient" x1="0" y1="0" x2="1" y2="1">
-                              <stop offset="0%" stopColor="#c0392b" />
-                              <stop offset="100%" stopColor="#e74c3c" />
+                            <linearGradient id="failGradient" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="0%" stopColor="#e74c3c" />
+                              <stop offset="100%" stopColor="#c0392b" />
                             </linearGradient>
                           </defs>
                           <Pie
@@ -2584,15 +3595,20 @@ const TestingModule = () => {
                             outerRadius={100}
                             fill="#8884d8"
                             dataKey="value"
+                            stroke="none"
                           >
                             {[
                               { name: 'Passed', value: passedTests, color: 'url(#passGradient)' },
                               { name: 'Failed', value: failedTests, color: 'url(#failGradient)' }
                             ].map((entry, index) => (
-                              <Cell key={`cell-${index}`} fill={entry.color} />
+                              <Cell key={`cell-${index}`} fill={entry.color} stroke="none" />
                             ))}
                           </Pie>
-                          <Tooltip contentStyle={{ backgroundColor: theme.bg.card, border: `1px solid ${theme.border.default}`, color: theme.text.primary }} />
+                          <Tooltip
+                            contentStyle={{ backgroundColor: theme.bg.card, border: `1px solid ${theme.border.default}`, color: theme.text.primary }}
+                            itemStyle={{ color: theme.text.primary }}
+                            labelStyle={{ color: theme.text.primary }}
+                          />
                           <Legend wrapperStyle={{ color: theme.text.primary }} />
                         </PieChart>
                       </ResponsiveContainer>
@@ -2656,7 +3672,11 @@ const TestingModule = () => {
                           <CartesianGrid strokeDasharray="3 3" stroke={theme.border.default} />
                           <XAxis dataKey="standard" tick={{ fill: theme.text.primary }} />
                           <YAxis tick={{ fill: theme.text.primary }} />
-                          <Tooltip contentStyle={{ backgroundColor: theme.bg.card, border: `1px solid ${theme.border.default}`, color: theme.text.primary }} />
+                          <Tooltip
+                            contentStyle={{ backgroundColor: theme.bg.card, border: `1px solid ${theme.border.default}`, color: theme.text.primary }}
+                            itemStyle={{ color: theme.text.primary }}
+                            labelStyle={{ color: theme.text.primary }}
+                          />
                           <Legend wrapperStyle={{ color: theme.text.primary }} />
                           <Bar dataKey="passed" fill="url(#barPassGradient)" name="Passed" />
                           <Bar dataKey="failed" fill="url(#barFailGradient)" name="Failed" />
@@ -2711,7 +3731,11 @@ const TestingModule = () => {
                           <CartesianGrid strokeDasharray="3 3" stroke={theme.border.default} />
                           <XAxis dataKey="range" tick={{ fill: theme.text.primary }} />
                           <YAxis tick={{ fill: theme.text.primary }} />
-                          <Tooltip contentStyle={{ backgroundColor: theme.bg.card, border: `1px solid ${theme.border.default}`, color: theme.text.primary }} />
+                          <Tooltip
+                            contentStyle={{ backgroundColor: theme.bg.card, border: `1px solid ${theme.border.default}`, color: theme.text.primary }}
+                            itemStyle={{ color: theme.text.primary }}
+                            labelStyle={{ color: theme.text.primary }}
+                          />
                           <Legend 
                             wrapperStyle={{ color: theme.text.primary }} 
                             formatter={(value) => <span style={{ color: theme.text.primary }}>{value}</span>}
@@ -2775,7 +3799,11 @@ const TestingModule = () => {
                           <CartesianGrid strokeDasharray="3 3" stroke={theme.border.default} />
                           <XAxis dataKey="test" tick={{ fill: theme.text.primary }} />
                           <YAxis domain={[0, 100]} tick={{ fill: theme.text.primary }} />
-                          <Tooltip contentStyle={{ backgroundColor: theme.bg.card, border: `1px solid ${theme.border.default}`, color: theme.text.primary }} />
+                          <Tooltip
+                            contentStyle={{ backgroundColor: theme.bg.card, border: `1px solid ${theme.border.default}`, color: theme.text.primary }}
+                            itemStyle={{ color: theme.text.primary }}
+                            labelStyle={{ color: theme.text.primary }}
+                          />
                           <Legend wrapperStyle={{ color: theme.text.primary }} />
                           <Line 
                             type="monotone" 
@@ -2822,7 +3850,7 @@ const TestingModule = () => {
                           </tr>
                         </thead>
                         <tbody>
-                          {results.slice(0, 10).map((result, index) => (
+                          {results.slice(-10).reverse().map((result, index) => (
                             <tr key={index} style={{ 
                               borderBottom: `1px solid ${colors.border}`,
                               backgroundColor: isDarkMode ? colors.tableRowBg : 'transparent'
@@ -2860,6 +3888,9 @@ const TestingModule = () => {
             {/* Results Tab */}
             {adminActiveTab === 'results' && (
               <>
+                {/* Hidden trigger button */}
+                <button id="result-add-btn" onClick={openAddResultModal} style={{ display: 'none' }} />
+
                 {/* FILTER BAR */}
                 <div style={{ 
                   backgroundColor: theme.bg.card,
@@ -3087,6 +4118,98 @@ const TestingModule = () => {
                           {standardOptions.map(s => <option key={s} value={s}>{s}</option>)}
                         </select>
                       </div>
+                      <div>
+                        <label style={{ 
+                          display: 'block', 
+                          marginBottom: 10, 
+                          fontWeight: '600', 
+                          color: theme.text.primary, 
+                          fontSize: '0.9em',
+                          letterSpacing: '0.3px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '6px'
+                        }}>                          <span style={{
+                            width: '6px',
+                            height: '6px',
+                            borderRadius: '50%',
+                            background: 'linear-gradient(135deg, #c0392b, #e74c3c)'
+                          }}></span>
+                          From Date
+                        </label>
+                        <input
+                          type="date"
+                          value={filterDateFrom}
+                          onChange={e => setFilterDateFrom(e.target.value)}
+                          style={{
+                            width: '100%',
+                            padding: '12px 15px',
+                            fontSize: '14px',
+                            border: `2px solid ${theme.border.default}`,
+                            borderRadius: '4px',
+                            backgroundColor: theme.bg.input,
+                            color: theme.text.primary,
+                            fontWeight: '500',
+                            cursor: 'pointer',
+                            transition: 'all 0.2s ease',
+                            outline: 'none'
+                          }}
+                          onFocus={e => {
+                            e.target.style.borderColor = theme.text.primary;
+                            e.target.style.backgroundColor = theme.bg.secondary;
+                          }}
+                          onBlur={e => {
+                            e.target.style.borderColor = theme.border.default;
+                            e.target.style.backgroundColor = theme.bg.input;
+                          }}
+                        />
+                      </div>
+                      <div>
+                        <label style={{ 
+                          display: 'block', 
+                          marginBottom: 10, 
+                          fontWeight: '600', 
+                          color: theme.text.primary, 
+                          fontSize: '0.9em',
+                          letterSpacing: '0.3px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '6px'
+                        }}>                          <span style={{
+                            width: '6px',
+                            height: '6px',
+                            borderRadius: '50%',
+                            background: 'linear-gradient(135deg, #c0392b, #e74c3c)'
+                          }}></span>
+                          To Date
+                        </label>
+                        <input
+                          type="date"
+                          value={filterDateTo}
+                          onChange={e => setFilterDateTo(e.target.value)}
+                          style={{
+                            width: '100%',
+                            padding: '12px 15px',
+                            fontSize: '14px',
+                            border: `2px solid ${theme.border.default}`,
+                            borderRadius: '4px',
+                            backgroundColor: theme.bg.input,
+                            color: theme.text.primary,
+                            fontWeight: '500',
+                            cursor: 'pointer',
+                            transition: 'all 0.2s ease',
+                            outline: 'none'
+                          }}
+                          onFocus={e => {
+                            e.target.style.borderColor = theme.text.primary;
+                            e.target.style.backgroundColor = theme.bg.secondary;
+                          }}
+                          onBlur={e => {
+                            e.target.style.borderColor = theme.border.default;
+                            e.target.style.backgroundColor = theme.bg.input;
+                          }}
+                        />
+                      </div>
                     </div>
                     
                     {/* Filter Actions with Results Count */}
@@ -3155,21 +4278,24 @@ const TestingModule = () => {
                         </button>
                         <button 
                           onClick={clearFilters}
-                          disabled={!filterEmpId && !filterEmpName && filterStatus === 'All' && filterStandard === 'All'}
+                          disabled={!filterEmpId && !filterEmpName && filterStatus === 'All' && filterStandard === 'All' && !filterDateFrom && !filterDateTo}
                           style={{ 
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '8px',
                             padding: '12px 24px',
                             backgroundColor: colors.inputBg,
                             color: colors.textMuted,
                             border: `2px solid ${colors.inputBorder}`,
                             borderRadius: '28px',
-                            cursor: (filterEmpId || filterEmpName || filterStatus !== 'All' || filterStandard !== 'All') ? 'pointer' : 'not-allowed',
+                            cursor: (filterEmpId || filterEmpName || filterStatus !== 'All' || filterStandard !== 'All' || filterDateFrom || filterDateTo) ? 'pointer' : 'not-allowed',
                             fontSize: '0.95em',
                             fontWeight: '500',
                             transition: 'all 0.2s ease',
-                            opacity: (filterEmpId || filterEmpName || filterStatus !== 'All' || filterStandard !== 'All') ? 1 : 0.5
+                            opacity: (filterEmpId || filterEmpName || filterStatus !== 'All' || filterStandard !== 'All' || filterDateFrom || filterDateTo) ? 1 : 0.5
                           }}
                           onMouseOver={e => {
-                            if (filterEmpId || filterEmpName || filterStatus !== 'All' || filterStandard !== 'All') {
+                            if (filterEmpId || filterEmpName || filterStatus !== 'All' || filterStandard !== 'All' || filterDateFrom || filterDateTo) {
                               e.currentTarget.style.borderColor = '#c0392b';
                               e.currentTarget.style.color = '#c0392b';
                               e.currentTarget.style.backgroundColor = colors.cardBg;
@@ -3181,7 +4307,14 @@ const TestingModule = () => {
                             e.currentTarget.style.backgroundColor = colors.inputBg;
                           }}
                         >
-                          Clear All Filters
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                            <polyline points="3 6 5 6 21 6"></polyline>
+                            <path d="M19 6l-1 14H6L5 6"></path>
+                            <path d="M10 11v6"></path>
+                            <path d="M14 11v6"></path>
+                            <path d="M9 6V4h6v2"></path>
+                          </svg>
+                          Clear Filter
                         </button>
                       </div>
                     </div>
@@ -3190,7 +4323,7 @@ const TestingModule = () => {
 
                 {/* Filtered Charts Section */}
                 {filteredResults.length > 0 && (
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '20px', marginBottom: '30px' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: dashboardTwoCol, gap: '20px', marginBottom: '30px' }}>
                     {/* Pass/Fail Pie Chart */}
                     <div style={{
                       backgroundColor: theme.bg.card,
@@ -3207,13 +4340,13 @@ const TestingModule = () => {
                       <ResponsiveContainer width="100%" height={300}>
                         <PieChart>
                           <defs>
-                            <linearGradient id="resultsPassGradient" x1="0" y1="0" x2="1" y2="1">
-                              <stop offset="0%" stopColor="#27ae60" />
-                              <stop offset="100%" stopColor="#2ecc71" />
+                            <linearGradient id="resultsPassGradient" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="0%" stopColor="#2ecc71" />
+                              <stop offset="100%" stopColor="#27ae60" />
                             </linearGradient>
-                            <linearGradient id="resultsFailGradient" x1="0" y1="0" x2="1" y2="1">
-                              <stop offset="0%" stopColor="#c0392b" />
-                              <stop offset="100%" stopColor="#e74c3c" />
+                            <linearGradient id="resultsFailGradient" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="0%" stopColor="#e74c3c" />
+                              <stop offset="100%" stopColor="#c0392b" />
                             </linearGradient>
                           </defs>
                           <Pie
@@ -3228,15 +4361,20 @@ const TestingModule = () => {
                             outerRadius={100}
                             fill="#8884d8"
                             dataKey="value"
+                            stroke="none"
                           >
                             {[
                               { name: 'Passed', value: passedTests, color: 'url(#resultsPassGradient)' },
                               { name: 'Failed', value: failedTests, color: 'url(#resultsFailGradient)' }
                             ].map((entry, index) => (
-                              <Cell key={`cell-${index}`} fill={entry.color} />
+                              <Cell key={`cell-${index}`} fill={entry.color} stroke="none" />
                             ))}
                           </Pie>
-                          <Tooltip contentStyle={{ backgroundColor: theme.bg.card, border: `1px solid ${theme.border.default}`, color: theme.text.primary }} />
+                          <Tooltip
+                            contentStyle={{ backgroundColor: theme.bg.card, border: `1px solid ${theme.border.default}`, color: theme.text.primary }}
+                            itemStyle={{ color: theme.text.primary }}
+                            labelStyle={{ color: theme.text.primary }}
+                          />
                           <Legend wrapperStyle={{ color: theme.text.primary }} />
                         </PieChart>
                       </ResponsiveContainer>
@@ -3290,7 +4428,11 @@ const TestingModule = () => {
                           <CartesianGrid strokeDasharray="3 3" stroke={theme.border.default} />
                           <XAxis dataKey="standard" tick={{ fill: theme.text.primary }} />
                           <YAxis tick={{ fill: theme.text.primary }} />
-                          <Tooltip contentStyle={{ backgroundColor: theme.bg.card, border: `1px solid ${theme.border.default}`, color: theme.text.primary }} />
+                          <Tooltip
+                            contentStyle={{ backgroundColor: theme.bg.card, border: `1px solid ${theme.border.default}`, color: theme.text.primary }}
+                            itemStyle={{ color: theme.text.primary }}
+                            labelStyle={{ color: theme.text.primary }}
+                          />
                           <Legend wrapperStyle={{ color: theme.text.primary }} />
                           <Bar dataKey="passed" fill="url(#resultsBarPassGradient)" name="Passed" />
                           <Bar dataKey="failed" fill="url(#resultsBarFailGradient)" name="Failed" />
@@ -3338,7 +4480,11 @@ const TestingModule = () => {
                           <CartesianGrid strokeDasharray="3 3" stroke={theme.border.default} />
                           <XAxis dataKey="range" tick={{ fill: theme.text.primary }} />
                           <YAxis tick={{ fill: theme.text.primary }} />
-                          <Tooltip contentStyle={{ backgroundColor: theme.bg.card, border: `1px solid ${theme.border.default}`, color: theme.text.primary }} />
+                          <Tooltip
+                            contentStyle={{ backgroundColor: theme.bg.card, border: `1px solid ${theme.border.default}`, color: theme.text.primary }}
+                            itemStyle={{ color: theme.text.primary }}
+                            labelStyle={{ color: theme.text.primary }}
+                          />
                           <Legend 
                             wrapperStyle={{ color: theme.text.primary }} 
                             formatter={(value) => <span style={{ color: theme.text.primary }}>{value}</span>}
@@ -3385,7 +4531,7 @@ const TestingModule = () => {
                       </div>
                       <ResponsiveContainer width="100%" height={300}>
                         <LineChart
-                          data={filteredResults.slice(-20).map((r, idx) => ({
+                          data={filteredResults.slice(0, 20).map((r, idx) => ({
                             test: `Test ${idx + 1}`,
                             score: toPctNumber(r.PERCENTAGE),
                             name: norm(r.NAME)
@@ -3395,7 +4541,11 @@ const TestingModule = () => {
                           <CartesianGrid strokeDasharray="3 3" stroke={theme.border.default} />
                           <XAxis dataKey="test" tick={{ fill: theme.text.primary }} />
                           <YAxis domain={[0, 100]} tick={{ fill: theme.text.primary }} />
-                          <Tooltip contentStyle={{ backgroundColor: theme.bg.card, border: `1px solid ${theme.border.default}`, color: theme.text.primary }} />
+                          <Tooltip
+                            contentStyle={{ backgroundColor: theme.bg.card, border: `1px solid ${theme.border.default}`, color: theme.text.primary }}
+                            itemStyle={{ color: theme.text.primary }}
+                            labelStyle={{ color: theme.text.primary }}
+                          />
                           <Legend wrapperStyle={{ color: theme.text.primary }} />
                           <Line 
                             type="monotone" 
@@ -3465,7 +4615,9 @@ const TestingModule = () => {
                           </tr>
                         </thead>
                         <tbody>
-                          {filteredResults.map((result, index) => {
+                          {paginatedResults.map((result, index) => {
+                            const hasAnswerSheet = String(result.HAS_ANSWER_SHEET) === '1' || result.HAS_ANSWER_SHEET === 1;
+
                             const handleDeleteResult = async () => {
                               if (!window.confirm(`Are you sure you want to delete this test result for ${result.NAME}?`)) return;
                               try {
@@ -3482,17 +4634,87 @@ const TestingModule = () => {
                               }
                             };
 
-                            const handleDownloadPDF = () => {
+                            const handleDownloadPDF = async () => {
+                              if (!hasAnswerSheet) {
+                                showToast('Detailed answer sheet is not available for this result.', 'info');
+                                return;
+                              }
+
                               const url = `${API_BASE_URL}/api/results/${encodeURIComponent(result.ID)}/${encodeURIComponent(result.STANDARD)}/${encodeURIComponent(result.DATE)}/pdf`;
-                              window.open(url, '_blank');
+                              try {
+                                const response = await fetch(url);
+                                if (!response.ok) throw new Error('Failed to download test sheet');
+
+                                const pdfBlob = await response.blob();
+                                const blobUrl = window.URL.createObjectURL(pdfBlob);
+                                const link = document.createElement('a');
+                                const safeStandard = String(result.STANDARD || 'Test').replace(/[^a-zA-Z0-9_-]+/g, '_');
+                                const safeName = String(result.NAME || 'Employee').replace(/[^a-zA-Z0-9_-]+/g, '_');
+
+                                link.href = blobUrl;
+                                link.download = `Test_Sheet_${result.ID}_${safeStandard}_${safeName}.pdf`;
+                                document.body.appendChild(link);
+                                link.click();
+                                document.body.removeChild(link);
+                                window.URL.revokeObjectURL(blobUrl);
+                              } catch (error) {
+                                console.error('Error downloading test sheet PDF:', error);
+                                showToast('Failed to download test sheet PDF', 'error');
+                              }
                             };
+
+                            const handleEditResult = () => {
+                              openEditResultModal(result);
+                            };
+
+                            const isPracticalResult = String(result.STANDARD || '').includes('(Practical)');
+                            const hasAttachment =
+                              String(result.HAS_PRACTICAL_ATTACHMENT) === '1' || result.HAS_PRACTICAL_ATTACHMENT === 1;
+
+                            const handleDownloadAttachment = async () => {
+                              if (!hasAttachment) {
+                                showToast('No attachment found for this result.', 'info');
+                                return;
+                              }
+
+                              const url = `${API_BASE_URL}/api/results/${encodeURIComponent(result.ID)}/${encodeURIComponent(result.STANDARD)}/${encodeURIComponent(result.DATE)}/attachment`;
+                              try {
+                                const response = await fetch(url);
+                                if (!response.ok) throw new Error('Failed to download attachment');
+
+                                const blob = await response.blob();
+                                const blobUrl = window.URL.createObjectURL(blob);
+                                const link = document.createElement('a');
+                                const safeStandard = String(result.STANDARD || 'Practical').replace(/[^a-zA-Z0-9_-]+/g, '_');
+                                const safeName = String(result.NAME || 'Employee').replace(/[^a-zA-Z0-9_-]+/g, '_');
+                                const prefix = isPracticalResult ? 'Practical_Attachment' : 'Result_Attachment';
+                                const fallbackName = `${prefix}_${result.ID}_${safeStandard}_${safeName}`;
+                                const downloadName = result.PRACTICAL_ATTACHMENT_NAME || fallbackName;
+
+                                link.href = blobUrl;
+                                link.download = downloadName;
+                                document.body.appendChild(link);
+                                link.click();
+                                document.body.removeChild(link);
+                                window.URL.revokeObjectURL(blobUrl);
+                              } catch (error) {
+                                console.error('Error downloading attachment:', error);
+                                showToast('Failed to download attachment', 'error');
+                              }
+                            };
+
+                            const downloadEnabled = hasAttachment || hasAnswerSheet;
+                            const handleDownload = hasAttachment ? handleDownloadAttachment : handleDownloadPDF;
+                            const downloadTitle = hasAttachment
+                              ? (isPracticalResult ? 'Download Practical Attachment' : 'Download Attachment')
+                              : (hasAnswerSheet ? 'Download Test Sheet PDF' : 'No attachment or answer sheet available');
 
                             return (
                               <tr key={`${result.ID}-${result.STANDARD}-${result.DATE}-${index}`} style={{ 
                                 borderBottom: `1px solid ${colors.border}`,
                                 backgroundColor: isDarkMode ? colors.tableRowBg : 'transparent'
                               }}>
-                                <td style={commonStyles.td}>{index + 1}</td>
+                                <td style={commonStyles.td}>{((resultsCurrentPage - 1) * resultsItemsPerPage + index + 1)}</td>
                                 <td style={commonStyles.td}>{norm(result.ID)}</td>
                                 <td style={commonStyles.td}>{norm(result.NAME)}</td>
                                 <td style={commonStyles.td}>{norm(result.STANDARD)}</td>
@@ -3518,38 +4740,77 @@ const TestingModule = () => {
                                 </td>
                                 <td style={commonStyles.td}>{norm(result.DATE)}</td>
                                 <td style={commonStyles.td}>
-                                  <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
+                                  <div style={{ display: 'flex', gap: '8px', justifyContent: 'center', alignItems: 'center', flexWrap: 'nowrap' }}>
                                     <button
-                                      onClick={handleDownloadPDF}
+                                      onClick={handleDownload}
+                                      disabled={!downloadEnabled}
                                       style={{
                                         padding: '8px',
-                                        backgroundColor: '#1a1a2e',
+                                        width: '36px',
+                                        height: '36px',
+                                        boxSizing: 'border-box',
+                                        backgroundColor: downloadEnabled ? '#1a1a2e' : '#95a5a6',
                                         color: 'white',
-                                        border: '2px solid #1a1a2e',
+                                        border: downloadEnabled ? '2px solid #1a1a2e' : '2px solid #95a5a6',
                                         borderRadius: '28px',
-                                        cursor: 'pointer',
-                                        marginRight: '8px',
+                                        cursor: downloadEnabled ? 'pointer' : 'not-allowed',
+                                        opacity: downloadEnabled ? 1 : 0.65,
                                         display: 'inline-flex',
                                         alignItems: 'center',
                                         justifyContent: 'center',
                                         transition: 'all 0.2s ease'
                                       }}
-                                      title="Download Test Sheet PDF"
+                                      title={downloadTitle}
                                       onMouseOver={e => {
+                                        if (!downloadEnabled) return;
                                         e.currentTarget.style.backgroundColor = '#e1e2e2ff';
                                         e.currentTarget.style.color = '#1a1a2e';
                                       }}
                                       onMouseOut={e => {
-                                        e.currentTarget.style.backgroundColor = '#1a1a2e';
+                                        e.currentTarget.style.backgroundColor = downloadEnabled ? '#1a1a2e' : '#95a5a6';
                                         e.currentTarget.style.color = 'white';
                                       }}
                                     >
                                       <Download size={16} />
                                     </button>
                                     <button
+                                      onClick={handleEditResult}
+                                      style={{
+                                        padding: '8px',
+                                        width: '36px',
+                                        height: '36px',
+                                        boxSizing: 'border-box',
+                                        background: 'linear-gradient(120deg, #1a1a2e, #16213e)',
+                                        color: 'white',
+                                        border: '2px solid transparent',
+                                        borderRadius: '28px',
+                                        cursor: 'pointer',
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        transition: 'all 0.2s ease'
+                                      }}
+                                      title="Edit Test Result"
+                                      onMouseOver={e => {
+                                        e.currentTarget.style.background = '#e1e2e2ff';
+                                        e.currentTarget.style.border = '2px solid #1a1a2e';
+                                        e.currentTarget.style.color = '#1a1a2e';
+                                      }}
+                                      onMouseOut={e => {
+                                        e.currentTarget.style.background = 'linear-gradient(120deg, #1a1a2e, #16213e)';
+                                        e.currentTarget.style.border = '2px solid transparent';
+                                        e.currentTarget.style.color = 'white';
+                                      }}
+                                    >
+                                      <Edit2 size={16} />
+                                    </button>
+                                    <button
                                       onClick={handleDeleteResult}
                                       style={{
                                         padding: '8px',
+                                        width: '36px',
+                                        height: '36px',
+                                        boxSizing: 'border-box',
                                         background: 'linear-gradient(120deg, #c0392b, #e74c3c)',
                                         color: 'white',
                                         border: '2px solid transparent',
@@ -3583,7 +4844,722 @@ const TestingModule = () => {
                       </table>
                     )}
                   </div>
+
+                  {/* Pagination Controls */}
+                  {totalResultPages > 1 && (
+                    <div style={{
+                      display: 'flex',
+                      justifyContent: 'center',
+                      alignItems: 'center',
+                      gap: '10px',
+                      flexWrap: 'wrap',
+                      padding: '14px 16px',
+                      backgroundColor: colors.cardBg,
+                      borderTop: `1px solid ${colors.border}`
+                    }}>
+                      <button
+                        onClick={() => setResultsCurrentPage(prev => Math.max(1, prev - 1))}
+                        disabled={resultsCurrentPage === 1}
+                        style={{
+                          padding: '8px 16px',
+                          backgroundColor: resultsCurrentPage === 1 ? colors.border : '#1a1a2e',
+                          color: resultsCurrentPage === 1 ? colors.textMuted : 'white',
+                          border: 'none',
+                          borderRadius: '8px',
+                          cursor: resultsCurrentPage === 1 ? 'not-allowed' : 'pointer',
+                          fontWeight: '600',
+                          fontSize: '14px',
+                          transition: 'all 0.2s ease'
+                        }}
+                      >
+                        Previous
+                      </button>
+
+                      <span style={{
+                        color: colors.text,
+                        fontWeight: '600',
+                        fontSize: '14px',
+                        padding: '0 10px'
+                      }}>
+                        Page {resultsCurrentPage} of {totalResultPages} ({filteredResults.length} results)
+                      </span>
+
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <span style={{ color: colors.textMuted, fontWeight: '600', fontSize: '12px' }}>Go to</span>
+                        <input
+                          type="number"
+                          min="1"
+                          max={totalResultPages}
+                          value={resultsGoToPage}
+                          onChange={(e) => setResultsGoToPage(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key !== 'Enter') return;
+                            const nextPage = parseInt(resultsGoToPage, 10);
+                            if (!Number.isFinite(nextPage)) return;
+                            setResultsCurrentPage(Math.min(totalResultPages, Math.max(1, nextPage)));
+                            setResultsGoToPage('');
+                          }}
+                          style={{
+                            width: '70px',
+                            padding: '6px 10px',
+                            border: `1px solid ${colors.border}`,
+                            borderRadius: '8px',
+                            fontSize: '14px',
+                            textAlign: 'center',
+                            backgroundColor: colors.cardAltBg,
+                            color: colors.text
+                          }}
+                        />
+                        <button
+                          onClick={() => {
+                            const nextPage = parseInt(resultsGoToPage, 10);
+                            if (!Number.isFinite(nextPage)) return;
+                            setResultsCurrentPage(Math.min(totalResultPages, Math.max(1, nextPage)));
+                            setResultsGoToPage('');
+                          }}
+                          style={{
+                            padding: '6px 12px',
+                            backgroundColor: '#1a1a2e',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '8px',
+                            cursor: 'pointer',
+                            fontWeight: '600',
+                            fontSize: '13px'
+                          }}
+                        >
+                          Go
+                        </button>
+                      </div>
+
+                      <button
+                        onClick={() => setResultsCurrentPage(prev => Math.min(totalResultPages, prev + 1))}
+                        disabled={resultsCurrentPage === totalResultPages}
+                        style={{
+                          padding: '8px 16px',
+                          backgroundColor: resultsCurrentPage === totalResultPages ? colors.border : '#1a1a2e',
+                          color: resultsCurrentPage === totalResultPages ? colors.textMuted : 'white',
+                          border: 'none',
+                          borderRadius: '8px',
+                          cursor: resultsCurrentPage === totalResultPages ? 'not-allowed' : 'pointer',
+                          fontWeight: '600',
+                          fontSize: '14px',
+                          transition: 'all 0.2s ease'
+                        }}
+                      >
+                        Next
+                      </button>
+                    </div>
+                  )}
                 </div>
+
+                {/* Add Result Modal */}
+                {showAddResultModal && (
+                  <div style={{
+                    position: 'fixed',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    backgroundColor: 'rgba(26, 26, 46, 0.85)',
+                    backdropFilter: 'blur(4px)',
+                    display: 'flex',
+                    justifyContent: 'center',
+                    alignItems: 'center',
+                    zIndex: 1000,
+                    padding: '20px',
+                    marginLeft: 0
+                  }}>
+                    <div style={{
+                      backgroundColor: theme.bg.card,
+                      padding: isMobile ? '22px 16px' : '35px',
+                      borderRadius: '28px',
+                      width: '100%',
+                      maxWidth: isMobile ? '100%' : '650px',
+                      maxHeight: '90vh',
+                      overflowY: 'auto',
+                      boxShadow: `0 20px 60px ${isDarkMode ? 'rgba(0,0,0,0.5)' : 'rgba(0, 0, 0, 0.3)'}`,
+                      animation: 'fadeIn 0.2s ease'
+                    }}>
+                      <h3 style={{
+                        marginTop: 0,
+                        marginBottom: '25px',
+                        color: theme.text.primary,
+                        fontSize: '1.6em',
+                        fontWeight: '600',
+                        borderBottom: '3px solid #c0392b',
+                        paddingBottom: '15px'
+                      }}>
+                        {resultEditMode ? 'Edit Result' : 'Add Result'}
+                      </h3>
+
+                      <form onSubmit={handleAddResultSubmit}>
+                        <div style={{ display: 'grid', gridTemplateColumns: twoColumnGrid, gap: '15px', marginBottom: '22px' }}>
+                          <div>
+                            <label style={{
+                              display: 'block',
+                              marginBottom: '8px',
+                              fontWeight: '600',
+                              color: colors.text,
+                              fontSize: '0.95em'
+                            }}>
+                              Employee ID:
+                            </label>
+                            <select
+                              value={resultFormData.employeeId}
+                              disabled={resultEditMode}
+                              onChange={(e) => {
+                                const selectedId = e.target.value;
+                                const selectedEmployee = employees.find(emp => String(emp.ID) === String(selectedId));
+                                setResultFormData({
+                                  ...resultFormData,
+                                  employeeId: selectedId,
+                                  employeeName: selectedEmployee ? String(selectedEmployee.Name || '') : ''
+                                });
+                              }}
+                              required
+                              style={{
+                                width: '100%',
+                                padding: '12px 15px',
+                                border: `2px solid ${colors.inputBorder}`,
+                                borderRadius: '4px',
+                                fontSize: '15px',
+                                transition: 'border-color 0.2s ease',
+                                outline: 'none',
+                                boxSizing: 'border-box',
+                                backgroundColor: resultEditMode ? colors.cardAltBg : colors.inputBg,
+                                color: colors.text,
+                                cursor: resultEditMode ? 'not-allowed' : 'pointer'
+                              }}
+                              onFocus={e => (e.target.style.borderColor = '#1a1a2e')}
+                              onBlur={e => (e.target.style.borderColor = colors.inputBorder)}
+                            >
+                              <option value="">Select ID</option>
+                              {resultEmployeeIdOptions.map(empId => (
+                                <option key={empId} value={empId}>
+                                  {empId}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          <div>
+                            <label style={{
+                              display: 'block',
+                              marginBottom: '8px',
+                              fontWeight: '600',
+                              color: colors.text,
+                              fontSize: '0.95em'
+                            }}>
+                              Employee Name:
+                            </label>
+                            <select
+                              value={resultFormData.employeeName}
+                              disabled={resultEditMode}
+                              onChange={(e) => {
+                                const selectedName = e.target.value;
+                                const selectedEmployee = employees.find(emp => String(emp.Name || '') === selectedName);
+                                setResultFormData({
+                                  ...resultFormData,
+                                  employeeName: selectedName,
+                                  employeeId: selectedEmployee ? String(selectedEmployee.ID || '') : ''
+                                });
+                              }}
+                              required
+                              style={{
+                                width: '100%',
+                                padding: '12px 15px',
+                                border: `2px solid ${colors.inputBorder}`,
+                                borderRadius: '4px',
+                                fontSize: '15px',
+                                transition: 'border-color 0.2s ease',
+                                outline: 'none',
+                                boxSizing: 'border-box',
+                                backgroundColor: resultEditMode ? colors.cardAltBg : colors.inputBg,
+                                color: colors.text,
+                                cursor: resultEditMode ? 'not-allowed' : 'pointer'
+                              }}
+                              onFocus={e => (e.target.style.borderColor = '#1a1a2e')}
+                              onBlur={e => (e.target.style.borderColor = colors.inputBorder)}
+                            >
+                              <option value="">Select Name</option>
+                              {resultEmployeeNameOptions.map(empName => (
+                                <option key={empName} value={empName}>
+                                  {empName}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        </div>
+
+                        <div style={{ marginBottom: '22px' }}>
+                          <label style={{
+                            display: 'block',
+                            marginBottom: '8px',
+                            fontWeight: '600',
+                            color: colors.text,
+                            fontSize: '0.95em'
+                          }}>
+                            Standard:
+                          </label>
+                          <select
+                            value={resultFormData.standard}
+                            disabled={resultEditMode}
+                            onChange={(e) => {
+                              setIsResultPercentageManuallyEdited(false);
+                              setResultFormData({ ...resultFormData, standard: e.target.value });
+                            }}
+                            required
+                            style={{
+                              width: '100%',
+                              padding: '12px 15px',
+                              border: `2px solid ${colors.inputBorder}`,
+                              borderRadius: '4px',
+                              fontSize: '15px',
+                              transition: 'border-color 0.2s ease',
+                              outline: 'none',
+                              boxSizing: 'border-box',
+                              backgroundColor: resultEditMode ? colors.cardAltBg : colors.inputBg,
+                              color: colors.text,
+                              cursor: resultEditMode ? 'not-allowed' : 'pointer'
+                            }}
+                            onFocus={e => (e.target.style.borderColor = '#1a1a2e')}
+                            onBlur={e => (e.target.style.borderColor = colors.inputBorder)}
+                          >
+                            <option value="">Select Standard</option>
+                            {resultStandardOptions.map(stdName => (
+                              <option key={stdName} value={stdName}>
+                                {stdName}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div style={{ display: 'grid', gridTemplateColumns: twoColumnGrid, gap: '15px', marginBottom: '22px' }}>
+                          <div>
+                            <label style={{
+                              display: 'block',
+                              marginBottom: '8px',
+                              fontWeight: '600',
+                              color: colors.text,
+                              fontSize: '0.95em'
+                            }}>
+                              Result Date:
+                            </label>
+                            <input
+                              type="date"
+                              value={resultFormData.resultDate}
+                              onChange={(e) => setResultFormData({ ...resultFormData, resultDate: e.target.value })}
+                              required
+                              style={{
+                                width: '100%',
+                                padding: '12px 15px',
+                                border: `2px solid ${colors.inputBorder}`,
+                                borderRadius: '4px',
+                                fontSize: '15px',
+                                transition: 'border-color 0.2s ease',
+                                outline: 'none',
+                                boxSizing: 'border-box',
+                                backgroundColor: colors.inputBg,
+                                color: colors.text
+                              }}
+                              onFocus={e => (e.target.style.borderColor = '#1a1a2e')}
+                              onBlur={e => (e.target.style.borderColor = colors.inputBorder)}
+                            />
+                          </div>
+                          <div>
+                            <label style={{
+                              display: 'block',
+                              marginBottom: '8px',
+                              fontWeight: '600',
+                              color: colors.text,
+                              fontSize: '0.95em'
+                            }}>
+                              Result Time:
+                            </label>
+                            <input
+                              type="time"
+                              value={resultFormData.resultTime}
+                              onChange={(e) => setResultFormData({ ...resultFormData, resultTime: e.target.value })}
+                              required
+                              style={{
+                                width: '100%',
+                                padding: '12px 15px',
+                                border: `2px solid ${colors.inputBorder}`,
+                                borderRadius: '4px',
+                                fontSize: '15px',
+                                transition: 'border-color 0.2s ease',
+                                outline: 'none',
+                                boxSizing: 'border-box',
+                                backgroundColor: colors.inputBg,
+                                color: colors.text
+                              }}
+                              onFocus={e => (e.target.style.borderColor = '#1a1a2e')}
+                              onBlur={e => (e.target.style.borderColor = colors.inputBorder)}
+                            />
+                          </div>
+                        </div>
+
+                        <div style={{ display: 'grid', gridTemplateColumns: twoColumnGrid, gap: '15px', marginBottom: '22px' }}>
+                          <div>
+                            <label style={{
+                              display: 'block',
+                              marginBottom: '8px',
+                              fontWeight: '600',
+                              color: colors.text,
+                              fontSize: '0.95em'
+                            }}>
+                              Total Questions:
+                            </label>
+                            <input
+                              type="number"
+                              min="1"
+                              value={resultFormData.totalQuestions}
+                              onChange={(e) => {
+                                setIsResultPercentageManuallyEdited(false);
+                                setResultFormData({ ...resultFormData, totalQuestions: e.target.value });
+                              }}
+                              required
+                              style={{
+                                width: '100%',
+                                padding: '12px 15px',
+                                border: `2px solid ${colors.inputBorder}`,
+                                borderRadius: '4px',
+                                fontSize: '15px',
+                                transition: 'border-color 0.2s ease',
+                                outline: 'none',
+                                boxSizing: 'border-box',
+                                backgroundColor: colors.inputBg,
+                                color: colors.text
+                              }}
+                              onFocus={e => (e.target.style.borderColor = '#1a1a2e')}
+                              onBlur={e => (e.target.style.borderColor = colors.inputBorder)}
+                              placeholder="100"
+                            />
+                          </div>
+                          <div>
+                            <label style={{
+                              display: 'block',
+                              marginBottom: '8px',
+                              fontWeight: '600',
+                              color: colors.text,
+                              fontSize: '0.95em'
+                            }}>
+                              Correct Answers:
+                            </label>
+                            <input
+                              type="number"
+                              min="0"
+                              value={resultFormData.correctAnswers}
+                              onChange={(e) => {
+                                setIsResultPercentageManuallyEdited(false);
+                                setResultFormData({ ...resultFormData, correctAnswers: e.target.value });
+                              }}
+                              required
+                              style={{
+                                width: '100%',
+                                padding: '12px 15px',
+                                border: `2px solid ${colors.inputBorder}`,
+                                borderRadius: '4px',
+                                fontSize: '15px',
+                                transition: 'border-color 0.2s ease',
+                                outline: 'none',
+                                boxSizing: 'border-box',
+                                backgroundColor: colors.inputBg,
+                                color: colors.text
+                              }}
+                              onFocus={e => (e.target.style.borderColor = '#1a1a2e')}
+                              onBlur={e => (e.target.style.borderColor = colors.inputBorder)}
+                              placeholder="85"
+                            />
+                          </div>
+                        </div>
+
+                        <div style={{ display: 'grid', gridTemplateColumns: twoColumnGrid, gap: '15px', marginBottom: '22px' }}>
+                          <div>
+                            <label style={{
+                              display: 'block',
+                              marginBottom: '8px',
+                              fontWeight: '600',
+                              color: colors.text,
+                              fontSize: '0.95em'
+                            }}>
+                              Percentage (%):
+                            </label>
+                            <input
+                              type="number"
+                              min="0"
+                              max="100"
+                              step="0.01"
+                              value={resultFormData.percentage}
+                              onChange={(e) => {
+                                setIsResultPercentageManuallyEdited(true);
+                                setResultFormData({ ...resultFormData, percentage: e.target.value });
+                              }}
+                              required
+                              style={{
+                                width: '100%',
+                                padding: '12px 15px',
+                                border: `2px solid ${colors.inputBorder}`,
+                                borderRadius: '4px',
+                                fontSize: '15px',
+                                transition: 'border-color 0.2s ease',
+                                outline: 'none',
+                                backgroundColor: colors.inputBg,
+                                color: colors.text,
+                                boxSizing: 'border-box'
+                              }}
+                              onFocus={e => (e.target.style.borderColor = '#1a1a2e')}
+                              onBlur={e => (e.target.style.borderColor = colors.inputBorder)}
+                              placeholder="Auto calculated (editable)"
+                            />
+                            <div style={{ marginTop: '6px', fontSize: '12px', color: colors.textMuted }}>
+                              {resultHasNegativeMarking
+                                ? 'Auto formula: (Correct - Wrong x 0.25) / Total x 100'
+                                : 'Auto formula: Correct / Total x 100'}
+                            </div>
+                          </div>
+                          <div>
+                            <label style={{
+                              display: 'block',
+                              marginBottom: '8px',
+                              fontWeight: '600',
+                              color: colors.text,
+                              fontSize: '0.95em'
+                            }}>
+                              Passing Criteria (%):
+                            </label>
+                            <input
+                              type="number"
+                              min="0"
+                              max="100"
+                              value={resultFormData.passingCriteria}
+                              onChange={(e) => setResultFormData({ ...resultFormData, passingCriteria: e.target.value })}
+                              required
+                              style={{
+                                width: '100%',
+                                padding: '12px 15px',
+                                border: `2px solid ${colors.inputBorder}`,
+                                borderRadius: '4px',
+                                fontSize: '15px',
+                                transition: 'border-color 0.2s ease',
+                                outline: 'none',
+                                boxSizing: 'border-box',
+                                backgroundColor: colors.inputBg,
+                                color: colors.text
+                              }}
+                              onFocus={e => (e.target.style.borderColor = '#1a1a2e')}
+                              onBlur={e => (e.target.style.borderColor = colors.inputBorder)}
+                            />
+                          </div>
+                        </div>
+
+                        <div style={{ marginBottom: '15px' }}>
+                          <label style={{
+                            display: 'block',
+                            marginBottom: '8px',
+                            fontWeight: '600',
+                            color: colors.text,
+                            fontSize: '0.95em'
+                          }}>
+                            Result Status:
+                          </label>
+                          <div style={{
+                            width: '100%',
+                            padding: '12px 15px',
+                            border: `2px solid ${colors.inputBorder}`,
+                            borderRadius: '4px',
+                            boxSizing: 'border-box',
+                            backgroundColor: colors.cardAltBg,
+                            color: addResultStatusPreview === 'Pass' ? '#27ae60' : addResultStatusPreview === 'Fail' ? '#c0392b' : colors.textMuted,
+                            fontWeight: '600'
+                          }}>
+                            {addResultStatusPreview || 'Calculated from percentage and passing criteria'}
+                          </div>
+                        </div>
+
+                        <div style={{ marginBottom: '22px' }}>
+                          <label style={{
+                            display: 'block',
+                            marginBottom: '8px',
+                            fontWeight: '600',
+                            color: colors.text,
+                            fontSize: '0.95em'
+                          }}>
+                            Attachment (PDF, DOC, DOCX):
+                          </label>
+                          {resultAttachmentLockNote && (
+                            <div style={{
+                              marginBottom: '10px',
+                              padding: '8px 12px',
+                              borderRadius: '8px',
+                              backgroundColor: colors.cardAltBg,
+                              border: `1px solid ${colors.inputBorder}`,
+                              color: colors.textMuted,
+                              fontSize: '12px'
+                            }}>
+                              {resultAttachmentLockNote}
+                            </div>
+                          )}
+                          {resultEditMode && resultEditTarget && (String(resultEditTarget.HAS_PRACTICAL_ATTACHMENT) === '1' || resultEditTarget.HAS_PRACTICAL_ATTACHMENT === 1) && (
+                            <div style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '10px',
+                              padding: '10px 12px',
+                              borderRadius: '8px',
+                              backgroundColor: colors.cardAltBg,
+                              border: `1px solid ${colors.inputBorder}`,
+                              marginBottom: '10px'
+                            }}>
+                              <span style={{ color: colors.text, fontSize: '0.9em' }}>
+                                Current: {resultEditTarget.PRACTICAL_ATTACHMENT_NAME || 'Attachment'}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => downloadResultAttachment(resultEditTarget)}
+                                style={{
+                                  padding: '6px 12px',
+                                  backgroundColor: '#1a1a2e',
+                                  color: '#fff',
+                                  border: 'none',
+                                  borderRadius: '20px',
+                                  cursor: 'pointer',
+                                  fontSize: '12px',
+                                  fontWeight: '600'
+                                }}
+                              >
+                                Download
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => removeResultAttachment(resultEditTarget)}
+                                style={{
+                                  padding: '6px 12px',
+                                  backgroundColor: '#c0392b',
+                                  color: '#fff',
+                                  border: 'none',
+                                  borderRadius: '20px',
+                                  cursor: 'pointer',
+                                  fontSize: '12px',
+                                  fontWeight: '600'
+                                }}
+                              >
+                                Remove
+                              </button>
+                            </div>
+                          )}
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (!resultAttachmentLocked) {
+                                  resultAttachmentInputRef.current?.click();
+                                }
+                              }}
+                              disabled={resultAttachmentLocked}
+                              onMouseEnter={(e) => {
+                                if (resultAttachmentLocked) return;
+                                e.currentTarget.style.background = '#fff';
+                                e.currentTarget.style.color = '#c0392b';
+                                e.currentTarget.style.border = '2px solid #c0392b';
+                                e.currentTarget.style.transform = 'translateY(-2px)';
+                                e.currentTarget.style.boxShadow = '0 6px 20px rgba(192, 57, 43, 0.4)';
+                              }}
+                              onMouseLeave={(e) => {
+                                if (resultAttachmentLocked) return;
+                                e.currentTarget.style.background = 'linear-gradient(120deg, #c0392b, #e74c3c)';
+                                e.currentTarget.style.color = '#fff';
+                                e.currentTarget.style.border = '2px solid transparent';
+                                e.currentTarget.style.transform = 'translateY(0)';
+                                e.currentTarget.style.boxShadow = 'none';
+                              }}
+                              style={{
+                                padding: '10px 16px',
+                                background: resultAttachmentLocked ? '#95a5a6' : 'linear-gradient(120deg, #c0392b, #e74c3c)',
+                                color: '#fff',
+                                border: '2px solid transparent',
+                                borderRadius: '8px',
+                                cursor: resultAttachmentLocked ? 'not-allowed' : 'pointer',
+                                fontSize: '13px',
+                                fontWeight: '600',
+                                transition: 'all 0.2s ease',
+                                opacity: resultAttachmentLocked ? 0.75 : 1
+                              }}
+                            >
+                              Choose File
+                            </button>
+                            <span style={{ fontSize: '12px', color: colors.textMuted }}>
+                              {resultAttachmentFile ? resultAttachmentFile.name : 'No file chosen'}
+                            </span>
+                          </div>
+                          <input
+                            ref={resultAttachmentInputRef}
+                            type="file"
+                            accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                            onChange={handleResultAttachmentChange}
+                            disabled={resultAttachmentLocked}
+                            style={{ display: 'none' }}
+                          />
+                        </div>
+
+                        <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '30px', paddingTop: '25px', borderTop: '2px solid #ecf0f1' }}>
+                          <button
+                            type="button"
+                            onClick={closeAddResultModal}
+                            style={{
+                              padding: '12px 30px',
+                              backgroundColor: theme.bg.card,
+                              color: theme.text.secondary,
+                              border: `2px solid ${theme.border.default}`,
+                              borderRadius: '28px',
+                              cursor: 'pointer',
+                              fontSize: '15px',
+                              fontWeight: '600',
+                              transition: 'all 0.2s ease'
+                            }}
+                            onMouseOver={(e) => {
+                              e.currentTarget.style.borderColor = '#c0392b';
+                              e.currentTarget.style.color = '#c0392b';
+                            }}
+                            onMouseOut={(e) => {
+                              e.currentTarget.style.borderColor = theme.border.default;
+                              e.currentTarget.style.color = theme.text.secondary;
+                            }}
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            type="submit"
+                            disabled={resultSaving}
+                            style={{
+                              padding: '12px 30px',
+                              background: resultSaving ? '#95a5a6' : 'linear-gradient(120deg, #c0392b, #e74c3c)',
+                              color: 'white',
+                              border: 'none',
+                              borderRadius: '18px',
+                              cursor: resultSaving ? 'not-allowed' : 'pointer',
+                              fontSize: '15px',
+                              fontWeight: '600',
+                              transition: 'all 0.2s ease'
+                            }}
+                            onMouseOver={(e) => {
+                              if (!resultSaving) {
+                                e.currentTarget.style.transform = 'translateY(-2px)';
+                                e.currentTarget.style.boxShadow = '0 6px 20px rgba(192, 57, 43, 0.4)';
+                              }
+                            }}
+                            onMouseOut={(e) => {
+                              e.currentTarget.style.transform = 'translateY(0)';
+                              e.currentTarget.style.boxShadow = 'none';
+                            }}
+                          >
+                            {resultSaving ? (resultEditMode ? 'Updating...' : 'Adding...') : (resultEditMode ? 'Update Result' : 'Add Result')}
+                          </button>
+                        </div>
+                      </form>
+                    </div>
+                  </div>
+                )}
 
                 {/* Removed certification type edit modal - now handled at certificate generation time */}
               </>
@@ -3617,13 +5593,22 @@ const TestingModule = () => {
         </div>
       </div>
     );
-  };
+  }; }, []);
 
   // Practical Results Management Page
-  const PracticalResultsPage = () => {
+  const PracticalResultsPage = useMemo(() => { return function PracticalResultsPageInner() {
+    // Shadow outer-scope variables with fresh values from refs.
+    const results = resultsRef.current;
+    const employees = employeesRef.current;
+    const standards = standardsRef.current;
+    const theme = themeRef.current;
+    const isDarkMode = isDarkModeRef.current;
+    const isMobile = isMobileRef.current;
+    const colors = colorsRef.current;
     const [showModal, setShowModal] = useState(false);
     const [editMode, setEditMode] = useState(false);
     const [currentResult, setCurrentResult] = useState(null);
+    const [isPracticalPercentageManuallyEdited, setIsPracticalPercentageManuallyEdited] = useState(false);
     const [formData, setFormData] = useState({
       employeeId: '',
       employeeName: '',
@@ -3632,139 +5617,324 @@ const TestingModule = () => {
       totalQuestions: '100',
       correctAnswers: '',
       percentage: '',
-      passingCriteria: '70'
+      passingCriteria: '75'
     });
     const [loading, setLoading] = useState(false);
     const [searchType, setSearchType] = useState('id'); // 'id' or 'name'
     const [searchQuery, setSearchQuery] = useState('');
+    const [attachmentFile, setAttachmentFile] = useState(null);
+    const attachmentInputRef = useRef(null);
 
-    // Get unique generalized standard names - practical is same for General and Specific
-    const getGeneralizedStandards = () => {
-      const generalizedNames = new Set();
-      standards.forEach(s => {
-        const stdName = s.Standard_List;
-        // Replace (General) or (Specific) with (Practical)
-        if (stdName.includes('(General)') || stdName.includes('(Specific)')) {
-          const practicalName = stdName.replace('(General)', '(Practical)').replace('(Specific)', '(Practical)');
-          generalizedNames.add(practicalName);
-        }
-      });
-      return Array.from(generalizedNames).sort();
+    const calculatePracticalPercentage = useCallback((totalQuestionsValue, correctAnswersValue) => {
+      const totalQuestions = parseInt(totalQuestionsValue, 10);
+      const correctAnswers = parseInt(correctAnswersValue, 10);
+
+      if (!Number.isFinite(totalQuestions) || totalQuestions <= 0) return '';
+      if (!Number.isFinite(correctAnswers) || correctAnswers < 0 || correctAnswers > totalQuestions) return '';
+
+      const percentage = (correctAnswers / totalQuestions) * 100;
+      return Number.isFinite(percentage) ? percentage.toFixed(2) : '';
+    }, []);
+
+    useEffect(() => {
+      if (isPracticalPercentageManuallyEdited) return;
+
+      const autoPercentage = calculatePracticalPercentage(formData.totalQuestions, formData.correctAnswers);
+      setFormData((prev) => (
+        prev.percentage === autoPercentage ? prev : { ...prev, percentage: autoPercentage }
+      ));
+    }, [
+      formData.totalQuestions,
+      formData.correctAnswers,
+      isPracticalPercentageManuallyEdited,
+      calculatePracticalPercentage
+    ]);
+
+    const PRACTICAL_ATTACHMENT_MAX_BYTES = 20 * 1024 * 1024;
+    const allowedAttachmentMimeTypes = new Set([
+      'application/pdf',
+      'application/msword',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    ]);
+    const allowedAttachmentExtensions = new Set(['.pdf', '.doc', '.docx']);
+
+    const resetAttachment = () => {
+      setAttachmentFile(null);
+      if (attachmentInputRef.current) {
+        attachmentInputRef.current.value = '';
+      }
     };
 
-    const practicalStandards = getGeneralizedStandards();
-
-    // Get practical results from all results
-    const allPracticalResults = results.filter(r => 
-      r.STANDARD && r.STANDARD.includes('(Practical)')
-    );
-
-    // Filter practical results based on search
-    const practicalResults = allPracticalResults.filter(result => {
-      if (!searchQuery) return true;
-      if (searchType === 'id') {
-        return String(result.ID).toLowerCase().includes(searchQuery.toLowerCase());
-      } else {
-        return String(result.NAME).toLowerCase().includes(searchQuery.toLowerCase());
+    const handleAttachmentChange = (e) => {
+      const file = e.target.files && e.target.files[0];
+      if (!file) {
+        setAttachmentFile(null);
+        return;
       }
-    });
 
-    // Get employees eligible for practical (passed both General and Specific)
-    const getEligibleEmployees = () => {
+      const ext = `.${String(file.name || '').split('.').pop()}`.toLowerCase();
+      const extOk = allowedAttachmentExtensions.has(ext);
+      const mimeOk = allowedAttachmentMimeTypes.has(file.type);
+
+      if (!extOk && !mimeOk) {
+        showToast('Only PDF, DOC, or DOCX attachments are allowed.', 'error');
+        resetAttachment();
+        return;
+      }
+
+      if (file.size > PRACTICAL_ATTACHMENT_MAX_BYTES) {
+        showToast('Attachment must be 20MB or smaller.', 'error');
+        resetAttachment();
+        return;
+      }
+
+      setAttachmentFile(file);
+    };
+
+    const uploadPracticalAttachment = async ({ id, standard, date, file }) => {
+      const formDataPayload = new FormData();
+      formDataPayload.append('attachment', file);
+
+      const response = await fetch(
+        `${API_BASE_URL}/api/results/${encodeURIComponent(id)}/${encodeURIComponent(standard)}/${encodeURIComponent(date)}/attachment`,
+        {
+          method: 'POST',
+          body: formDataPayload
+        }
+      );
+
+      if (!response.ok) {
+        const msg = await response.text().catch(() => '');
+        throw new Error(msg || `HTTP ${response.status}`);
+      }
+
+      return response.json();
+    };
+
+    const downloadPracticalAttachment = async (result) => {
+      const hasAttachment = String(result?.HAS_PRACTICAL_ATTACHMENT) === '1' || result?.HAS_PRACTICAL_ATTACHMENT === 1;
+      if (!hasAttachment) {
+        showToast('No attachment found for this result.', 'info');
+        return;
+      }
+
+      const url = `${API_BASE_URL}/api/results/${encodeURIComponent(result.ID)}/${encodeURIComponent(result.STANDARD)}/${encodeURIComponent(result.DATE)}/attachment`;
+      try {
+        const response = await fetch(url);
+        if (!response.ok) throw new Error('Failed to download attachment');
+
+        const blob = await response.blob();
+        const blobUrl = window.URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        const safeStandard = String(result.STANDARD || 'Practical').replace(/[^a-zA-Z0-9_-]+/g, '_');
+        const safeName = String(result.NAME || 'Employee').replace(/[^a-zA-Z0-9_-]+/g, '_');
+        const fallbackName = `Practical_Attachment_${result.ID}_${safeStandard}_${safeName}`;
+        const downloadName = result.PRACTICAL_ATTACHMENT_NAME || fallbackName;
+
+        link.href = blobUrl;
+        link.download = downloadName;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        window.URL.revokeObjectURL(blobUrl);
+      } catch (error) {
+        console.error('Error downloading attachment:', error);
+        showToast('Failed to download attachment', 'error');
+      }
+    };
+
+    const removePracticalAttachment = async (result) => {
+      const hasAttachment = String(result?.HAS_PRACTICAL_ATTACHMENT) === '1' || result?.HAS_PRACTICAL_ATTACHMENT === 1;
+      if (!hasAttachment) {
+        showToast('No attachment found for this result.', 'info');
+        return;
+      }
+
+      const confirmRemove = window.confirm('Remove this attachment? This cannot be undone.');
+      if (!confirmRemove) return;
+
+      try {
+        const response = await fetch(
+          `${API_BASE_URL}/api/results/${encodeURIComponent(result.ID)}/${encodeURIComponent(result.STANDARD)}/${encodeURIComponent(result.DATE)}/attachment`,
+          { method: 'DELETE' }
+        );
+
+        if (!response.ok) {
+          const msg = await response.text().catch(() => '');
+          throw new Error(msg || `HTTP ${response.status}`);
+        }
+
+        showToast('Attachment removed successfully!', 'success');
+        setCurrentResult((prev) => prev ? { ...prev, HAS_PRACTICAL_ATTACHMENT: 0, PRACTICAL_ATTACHMENT_NAME: null } : prev);
+        resetAttachment();
+        loadResults(true);
+      } catch (error) {
+        console.error('Error removing attachment:', error);
+        showToast('Failed to remove attachment', 'error');
+      }
+    };
+
+    const normalizePracticalBaseType = useCallback((value) => {
+      const cleaned = String(value || '')
+        .replace(/\(\s*(general|specific|practical)\s*\)/gi, '')
+        .replace(/\s+(general|specific|practical)\b/gi, '')
+        .replace(/[_-]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      if (!cleaned) return null;
+      return { display: cleaned, key: cleaned.toLowerCase() };
+    }, []);
+
+    const practicalStandards = useMemo(() => {
+      const generalizedNames = new Set();
+      standards.forEach((s) => {
+        const stdName = String(s?.Standard_List || '').trim();
+        if (!stdName) return;
+        const stdLower = stdName.toLowerCase();
+        if (stdLower.includes('general') || stdLower.includes('specific')) {
+          const baseType = normalizePracticalBaseType(stdName);
+          if (baseType) {
+            generalizedNames.add(`${baseType.display} (Practical)`);
+          }
+        }
+      });
+      return Array.from(generalizedNames).sort((a, b) => a.localeCompare(b));
+    }, [standards, normalizePracticalBaseType]);
+
+    const practicalResults = useMemo(() => {
+      const allPracticalResults = results.filter(
+        (r) => r.STANDARD && r.STANDARD.includes('(Practical)')
+      );
+
+      if (!searchQuery) return allPracticalResults;
+
+      const query = searchQuery.toLowerCase();
+      if (searchType === 'id') {
+        return allPracticalResults.filter((result) =>
+          String(result.ID || '').toLowerCase().includes(query)
+        );
+      }
+
+      return allPracticalResults.filter((result) =>
+        String(result.NAME || '').toLowerCase().includes(query)
+      );
+    }, [results, searchQuery, searchType]);
+
+    const eligibleEmployees = useMemo(() => {
       const grouped = {};
-      const passed = results.filter(r => r.STATUS && r.STATUS.toUpperCase() === 'PASS');
-      
-      console.log('All passed results:', passed.map(r => ({ id: r.ID, name: r.NAME, standard: r.STANDARD })));
-      
-      passed.forEach(r => {
-        const standard = r.STANDARD;
-        const empId = String(r.ID);
-        
-        // Skip if already practical result
-        if (standard.includes('(Practical)')) {
+      const passed = results.filter(
+        (r) => String(r.STATUS || '').trim().toUpperCase() === 'PASS'
+      );
+
+      passed.forEach((r) => {
+        const standard = String(r.STANDARD || '').trim();
+        const standardLower = standard.toLowerCase();
+        const empId = String(r.ID || '');
+
+        if (!empId || standardLower.includes('practical')) return;
+
+        const hasGeneral = standardLower.includes('general');
+        const hasSpecific = standardLower.includes('specific');
+
+        if (!hasGeneral && !hasSpecific) {
           return;
         }
-        
-        // Check for 2-row standards - CHECK MPT/UT/VT BEFORE PT to avoid substring matching
-        const isMagneticParticle = standard.includes('Magnetic Particle') || standard.includes('MPT (') || standard.startsWith('MPT');
-        const isUltrasonic = standard.includes('Ultrasonic') || standard.includes('UT (') || standard.startsWith('UT');
-        const isVisual = standard.includes('Visual') || standard.includes('VT (') || standard.startsWith('VT');
-        const isPenetrantTesting = standard.includes('Penetrant Testing') || standard.includes('PT (');
-        
-        console.log(`Checking ${standard}:`, { isPenetrantTesting, isMagneticParticle, isUltrasonic, isVisual });
-        
-        if (isPenetrantTesting || isMagneticParticle || isUltrasonic || isVisual) {
-          let baseType;
-          // Check in order: MPT, UT, VT first, then PT (to avoid substring matching)
-          if (isMagneticParticle) baseType = 'Magnetic Particle Testing';
-          else if (isUltrasonic) baseType = 'Ultrasonic Testing';
-          else if (isVisual) baseType = 'Visual Testing';
-          else if (isPenetrantTesting) baseType = 'Penetrant Testing';
-          
-          console.log(`Setting baseType for ${standard}: ${baseType}`);
-          
-          const key = `${empId}_${baseType}`;
-          
-          console.log(`Creating key: ${key}`);
-          
-          if (!grouped[key]) {
-            grouped[key] = {
-              empId,
-              empName: r.NAME,
-              baseType,
-              general: false,
-              specific: false,
-              practical: false
-            };
-            console.log(`Created new entry for ${key}`);
-          }
-          
-          const hasGeneral = standard.includes('General') || standard.includes('(General)');
-          const hasSpecific = standard.includes('Specific') || standard.includes('(Specific)');
-          
-          console.log(`${standard} - hasGeneral: ${hasGeneral}, hasSpecific: ${hasSpecific}`);
-          
-          if (hasGeneral) {
-            grouped[key].general = true;
-            console.log(`Set general=true for ${key}`);
-          } else if (hasSpecific) {
-            grouped[key].specific = true;
-            console.log(`Set specific=true for ${key}`);
-          }
-        }
-      });
-      
-      console.log('Grouped results:', JSON.stringify(grouped, null, 2));
-      console.log('MPT entry check:', grouped['2_Magnetic Particle Testing']);
-      
-      // Check for existing practical results and mark them
-      passed.forEach(r => {
-        if (r.STANDARD.includes('(Practical)')) {
-          const standard = r.STANDARD.replace(' (Practical)', '');
-          const empId = String(r.ID);
-          
-          let baseType;
-          if (standard.includes('Penetrant Testing') || standard === 'PT') baseType = 'Penetrant Testing';
-          else if (standard.includes('Magnetic Particle') || standard === 'MPT') baseType = 'Magnetic Particle Testing';
-          else if (standard.includes('Ultrasonic') || standard === 'UT') baseType = 'Ultrasonic Testing';
-          else if (standard.includes('Visual') || standard === 'VT') baseType = 'Visual Testing';
-          
-          if (baseType) {
-            const key = `${empId}_${baseType}`;
-            if (grouped[key]) {
-              grouped[key].practical = true;
-            }
-          }
-        }
-      });
-      
-      // Return only those who passed both General and Specific
-      const eligible = Object.values(grouped).filter(g => g.general && g.specific);
-      console.log('Eligible employees:', eligible);
-      return eligible;
-    };
 
-    const eligibleEmployees = getEligibleEmployees();
+        const baseType = normalizePracticalBaseType(standard);
+        if (!baseType) return;
+
+        const key = `${empId}_${baseType.key}`;
+
+        if (!grouped[key]) {
+          grouped[key] = {
+            empId,
+            empName: r.NAME,
+            baseType: baseType.display,
+            general: false,
+            specific: false,
+            practical: false,
+          };
+        }
+
+        if (hasGeneral) grouped[key].general = true;
+        if (hasSpecific) grouped[key].specific = true;
+      });
+
+      passed.forEach((r) => {
+        const standard = String(r.STANDARD || '').trim();
+        const standardLower = standard.toLowerCase();
+        if (!standardLower.includes('practical')) return;
+
+        const baseType = normalizePracticalBaseType(standard);
+        const empId = String(r.ID || '');
+
+        if (!baseType) return;
+
+        const key = `${empId}_${baseType.key}`;
+        if (grouped[key]) grouped[key].practical = true;
+      });
+
+      return Object.values(grouped)
+        .filter((g) => g.general && g.specific)
+        .sort((a, b) => {
+          const aNum = Number(a.empId);
+          const bNum = Number(b.empId);
+          const bothNumeric = Number.isFinite(aNum) && Number.isFinite(bNum);
+          if (bothNumeric && aNum !== bNum) return aNum - bNum;
+          if (a.empId !== b.empId) return a.empId.localeCompare(b.empId);
+          return a.baseType.localeCompare(b.baseType);
+        });
+    }, [results, normalizePracticalBaseType]);
+
+    const eligibleEmployeeIds = useMemo(
+      () => [...new Set(eligibleEmployees.map((emp) => emp.empId))],
+      [eligibleEmployees]
+    );
+
+    const eligibleEmployeeNames = useMemo(
+      () => [...new Set(eligibleEmployees.map((emp) => emp.empName))],
+      [eligibleEmployees]
+    );
+
+    const [eligibleCurrentPage, setEligibleCurrentPage] = useState(1);
+    const [eligibleGoToPage, setEligibleGoToPage] = useState('');
+    const [practicalCurrentPage, setPracticalCurrentPage] = useState(1);
+    const [practicalGoToPage, setPracticalGoToPage] = useState('');
+    const eligibleItemsPerPage = 50;
+    const practicalItemsPerPage = 50;
+
+    const totalEligiblePages = Math.ceil(eligibleEmployees.length / eligibleItemsPerPage);
+    const totalPracticalPages = Math.ceil(practicalResults.length / practicalItemsPerPage);
+
+    const paginatedEligibleEmployees = useMemo(() => {
+      const startIndex = (eligibleCurrentPage - 1) * eligibleItemsPerPage;
+      return eligibleEmployees.slice(startIndex, startIndex + eligibleItemsPerPage);
+    }, [eligibleEmployees, eligibleCurrentPage, eligibleItemsPerPage]);
+
+    const paginatedPracticalResults = useMemo(() => {
+      const startIndex = (practicalCurrentPage - 1) * practicalItemsPerPage;
+      return practicalResults.slice(startIndex, startIndex + practicalItemsPerPage);
+    }, [practicalResults, practicalCurrentPage, practicalItemsPerPage]);
+
+    useEffect(() => {
+      setPracticalCurrentPage(1);
+    }, [searchQuery, searchType]);
+
+    useEffect(() => {
+      setEligibleCurrentPage(1);
+    }, [eligibleEmployees.length]);
+
+    useEffect(() => {
+      if (totalPracticalPages > 0 && practicalCurrentPage > totalPracticalPages) {
+        setPracticalCurrentPage(totalPracticalPages);
+      }
+    }, [practicalCurrentPage, totalPracticalPages]);
+
+    useEffect(() => {
+      if (totalEligiblePages > 0 && eligibleCurrentPage > totalEligiblePages) {
+        setEligibleCurrentPage(totalEligiblePages);
+      }
+    }, [eligibleCurrentPage, totalEligiblePages]);
 
     const handleSubmit = async (e) => {
       e.preventDefault();
@@ -3778,19 +5948,44 @@ const TestingModule = () => {
       }
 
       // Use abbreviation directly - formData.standard already contains the abbreviation (MPT, PT, UT, VT)
-      const totalQ = parseInt(formData.totalQuestions) || 100;
-      const correctA = parseInt(formData.correctAnswers) || 0;
-      const percentage = ((correctA / totalQ) * 100).toFixed(2);
-      
+      const totalQ = parseInt(formData.totalQuestions, 10);
+      const correctA = parseInt(formData.correctAnswers, 10);
+      const percentageValue = parseFloat(formData.percentage);
+      const passingCriteriaValue = parseFloat(formData.passingCriteria);
+
+      if (!Number.isFinite(totalQ) || totalQ <= 0) {
+        showToast('Total questions must be greater than 0.', 'error');
+        setLoading(false);
+        return;
+      }
+
+      if (!Number.isFinite(correctA) || correctA < 0 || correctA > totalQ) {
+        showToast('Correct answers must be between 0 and total questions.', 'error');
+        setLoading(false);
+        return;
+      }
+
+      if (!Number.isFinite(percentageValue) || percentageValue < 0 || percentageValue > 100) {
+        showToast('Percentage must be between 0 and 100.', 'error');
+        setLoading(false);
+        return;
+      }
+
+      if (!Number.isFinite(passingCriteriaValue) || passingCriteriaValue < 0 || passingCriteriaValue > 100) {
+        showToast('Passing criteria must be between 0 and 100.', 'error');
+        setLoading(false);
+        return;
+      }
+
       const resultData = {
         ID: formData.employeeId,
         NAME: employee.Name,
         TOTAL_QUESTION: totalQ,
         CORRECT_ANSWER: correctA,
         WRONG_ANSWER: totalQ - correctA,
-        PERCENTAGE: `${percentage}%`,
-        PASSING_CRITERIA: `${formData.passingCriteria}%`,
-        STATUS: parseFloat(percentage) >= parseFloat(formData.passingCriteria) ? 'Pass' : 'Fail',
+        PERCENTAGE: `${percentageValue.toFixed(2)}%`,
+        PASSING_CRITERIA: `${passingCriteriaValue}%`,
+        STATUS: percentageValue >= passingCriteriaValue ? 'Pass' : 'Fail',
         STANDARD: formData.standard, // Already contains "(Practical)" from dropdown
         DATE: editMode ? currentResult.DATE : getPakistanDateTime(),
         answers: {},
@@ -3806,12 +6001,28 @@ const TestingModule = () => {
         });
 
         if (response.ok) {
+          if (attachmentFile) {
+            try {
+              await uploadPracticalAttachment({
+                id: resultData.ID,
+                standard: resultData.STANDARD,
+                date: resultData.DATE,
+                file: attachmentFile
+              });
+              showToast('Attachment uploaded successfully!', 'success');
+            } catch (uploadError) {
+              console.error('Attachment upload error:', uploadError);
+              showToast('Result saved but attachment upload failed.', 'error');
+            }
+          }
           showToast(editMode ? 'Practical result updated successfully!' : 'Practical result added successfully!', 'success');
+          await loadResults(true);
           setShowModal(false);
           setEditMode(false);
           setCurrentResult(null);
-          setFormData({ employeeId: '', employeeName: '', standard: '', standardFullName: '', totalQuestions: '100', correctAnswers: '', percentage: '', passingCriteria: '70' });
-          loadResults(true);
+          setIsPracticalPercentageManuallyEdited(false);
+          setFormData({ employeeId: '', employeeName: '', standard: '', standardFullName: '', totalQuestions: '100', correctAnswers: '', percentage: '', passingCriteria: '75' });
+          resetAttachment();
         } else {
           showToast(editMode ? 'Failed to update practical result' : 'Failed to add practical result', 'error');
         }
@@ -3824,26 +6035,23 @@ const TestingModule = () => {
     };
 
     const handleEdit = (result) => {
-      // Extract standard abbreviation from full name
-      const standardText = result.STANDARD.replace(' (Practical)', '');
-      let standardAbbr = '';
-      if (standardText.includes('Penetrant Testing')) standardAbbr = 'PT';
-      else if (standardText.includes('Magnetic Particle')) standardAbbr = 'MPT';
-      else if (standardText.includes('Ultrasonic')) standardAbbr = 'UT';
-      else if (standardText.includes('Visual')) standardAbbr = 'VT';
-      
+      const standardText = String(result.STANDARD || '');
+      const standardBase = standardText.replace(' (Practical)', '');
+
       setCurrentResult(result);
       setEditMode(true);
+      setIsPracticalPercentageManuallyEdited(false);
       setFormData({
         employeeId: result.ID,
         employeeName: result.NAME,
-        standard: standardAbbr,
-        standardFullName: standardText,
+        standard: standardText,
+        standardFullName: standardBase,
         totalQuestions: String(result.TOTAL_QUESTION || 100),
         correctAnswers: String(result.CORRECT_ANSWER || 0),
         percentage: result.PERCENTAGE ? result.PERCENTAGE.replace('%', '') : '',
-        passingCriteria: result.PASSING_CRITERIA ? result.PASSING_CRITERIA.replace('%', '') : '70'
+        passingCriteria: result.PASSING_CRITERIA ? result.PASSING_CRITERIA.replace('%', '') : '75'
       });
+      resetAttachment();
       setShowModal(true);
     };
 
@@ -3871,7 +6079,7 @@ const TestingModule = () => {
     };
 
     return (
-      <div style={{ padding: '30px' }}>
+      <div style={{ padding: isMobile ? '16px 12px' : '30px' }}>
         {/* Header Section with Filters */}
         <div style={{
           backgroundColor: theme.bg.card,
@@ -3915,7 +6123,7 @@ const TestingModule = () => {
             alignItems: 'center',
             flexWrap: 'wrap'
           }}>
-            <div style={{ minWidth: '180px' }}>
+            <div style={{ minWidth: isMobile ? '100%' : '180px' }}>
               <select
                 value={searchType}
                 onChange={(e) => setSearchType(e.target.value)}
@@ -3936,7 +6144,7 @@ const TestingModule = () => {
                 <option value="name">Employee Name</option>
               </select>
             </div>
-            <div style={{ flex: '1', minWidth: '250px' }}>
+            <div style={{ flex: '1', minWidth: isMobile ? '100%' : '250px' }}>
               <input
                 type="text"
                 placeholder={`Search by ${searchType === 'id' ? 'Employee ID' : 'Employee Name'}...`}
@@ -3968,6 +6176,9 @@ const TestingModule = () => {
               onClick={() => setSearchQuery('')}
               disabled={!searchQuery}
               style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
                 padding: '12px 24px',
                 backgroundColor: colors.inputBg,
                 color: colors.textMuted,
@@ -3992,6 +6203,13 @@ const TestingModule = () => {
                 e.currentTarget.style.backgroundColor = colors.inputBg;
               }}
             >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                <polyline points="3 6 5 6 21 6"></polyline>
+                <path d="M19 6l-1 14H6L5 6"></path>
+                <path d="M10 11v6"></path>
+                <path d="M14 11v6"></path>
+                <path d="M9 6V4h6v2"></path>
+              </svg>
               Clear Filter
             </button>
           </div>
@@ -4018,7 +6236,8 @@ const TestingModule = () => {
             }}>
               Employees Eligible For Practical Test
             </div>
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr style={{ backgroundColor: colors.cardAltBg }}>
                   <th style={{ padding: '14px 20px', textAlign: 'left', fontWeight: '600', color: colors.text }}>Employee ID</th>
@@ -4029,7 +6248,7 @@ const TestingModule = () => {
                 </tr>
               </thead>
               <tbody>
-                {eligibleEmployees.map((emp, index) => (
+                {paginatedEligibleEmployees.map((emp, index) => (
                   <tr key={index} style={{
                     borderBottom: `1px solid ${colors.border}`,
                     backgroundColor: index % 2 === 0 ? colors.cardBg : colors.cardAltBg
@@ -4077,7 +6296,114 @@ const TestingModule = () => {
                   </tr>
                 ))}
               </tbody>
-            </table>
+              </table>
+            </div>
+
+            {totalEligiblePages > 1 && (
+              <div style={{
+                display: 'flex',
+                justifyContent: 'center',
+                alignItems: 'center',
+                gap: '10px',
+                flexWrap: 'wrap',
+                padding: '14px 16px',
+                backgroundColor: colors.cardBg,
+                borderTop: `1px solid ${colors.border}`
+              }}>
+                <button
+                  onClick={() => setEligibleCurrentPage(prev => Math.max(1, prev - 1))}
+                  disabled={eligibleCurrentPage === 1}
+                  style={{
+                    padding: '8px 16px',
+                    backgroundColor: eligibleCurrentPage === 1 ? colors.border : '#1a1a2e',
+                    color: eligibleCurrentPage === 1 ? colors.textMuted : 'white',
+                    border: 'none',
+                    borderRadius: '8px',
+                    cursor: eligibleCurrentPage === 1 ? 'not-allowed' : 'pointer',
+                    fontWeight: '600',
+                    fontSize: '14px',
+                    transition: 'all 0.2s ease'
+                  }}
+                >
+                  Previous
+                </button>
+
+                <span style={{
+                  color: colors.text,
+                  fontWeight: '600',
+                  fontSize: '14px',
+                  padding: '0 10px'
+                }}>
+                  Page {eligibleCurrentPage} of {totalEligiblePages} ({eligibleEmployees.length} employees)
+                </span>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <span style={{ color: colors.textMuted, fontWeight: '600', fontSize: '12px' }}>Go to</span>
+                  <input
+                    type="number"
+                    min="1"
+                    max={totalEligiblePages}
+                    value={eligibleGoToPage}
+                    onChange={(e) => setEligibleGoToPage(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key !== 'Enter') return;
+                      const nextPage = parseInt(eligibleGoToPage, 10);
+                      if (!Number.isFinite(nextPage)) return;
+                      setEligibleCurrentPage(Math.min(totalEligiblePages, Math.max(1, nextPage)));
+                      setEligibleGoToPage('');
+                    }}
+                    style={{
+                      width: '70px',
+                      padding: '6px 10px',
+                      border: `1px solid ${colors.border}`,
+                      borderRadius: '8px',
+                      fontSize: '14px',
+                      textAlign: 'center',
+                      backgroundColor: colors.cardAltBg,
+                      color: colors.text
+                    }}
+                  />
+                  <button
+                    onClick={() => {
+                      const nextPage = parseInt(eligibleGoToPage, 10);
+                      if (!Number.isFinite(nextPage)) return;
+                      setEligibleCurrentPage(Math.min(totalEligiblePages, Math.max(1, nextPage)));
+                      setEligibleGoToPage('');
+                    }}
+                    style={{
+                      padding: '6px 12px',
+                      backgroundColor: '#1a1a2e',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '8px',
+                      cursor: 'pointer',
+                      fontWeight: '600',
+                      fontSize: '13px'
+                    }}
+                  >
+                    Go
+                  </button>
+                </div>
+
+                <button
+                  onClick={() => setEligibleCurrentPage(prev => Math.min(totalEligiblePages, prev + 1))}
+                  disabled={eligibleCurrentPage === totalEligiblePages}
+                  style={{
+                    padding: '8px 16px',
+                    backgroundColor: eligibleCurrentPage === totalEligiblePages ? colors.border : '#1a1a2e',
+                    color: eligibleCurrentPage === totalEligiblePages ? colors.textMuted : 'white',
+                    border: 'none',
+                    borderRadius: '8px',
+                    cursor: eligibleCurrentPage === totalEligiblePages ? 'not-allowed' : 'pointer',
+                    fontWeight: '600',
+                    fontSize: '14px',
+                    transition: 'all 0.2s ease'
+                  }}
+                >
+                  Next
+                </button>
+              </div>
+            )}
           </div>
         )}
 
@@ -4086,9 +6412,11 @@ const TestingModule = () => {
           backgroundColor: colors.cardBg,
           borderRadius: '28px',
           boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+          border: `1px solid ${theme.border.default}`,
           overflow: 'hidden'
         }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr style={{ backgroundColor: colors.tableHeaderBg, color: '#fff' }}>
                 <th style={{ padding: '16px 20px', textAlign: 'left', fontWeight: '600' }}>Employee ID</th>
@@ -4101,94 +6429,126 @@ const TestingModule = () => {
               </tr>
             </thead>
             <tbody>
-              {practicalResults.map((result, index) => (
-                <tr key={index} style={{
-                  borderBottom: `1px solid ${colors.border}`,
-                  transition: 'background-color 0.2s',
-                  backgroundColor: isDarkMode ? colors.tableRowBg : 'transparent'
-                }}>
-                  <td style={{ padding: '16px 20px', color: colors.text }}>{result.ID}</td>
-                  <td style={{ padding: '16px 20px', color: colors.text }}>{result.NAME}</td>
-                  <td style={{ padding: '16px 20px', color: colors.text }}>{result.STANDARD}</td>
-                  <td style={{ padding: '16px 20px', textAlign: 'center', fontWeight: 'bold', color: colors.text }}>
-                    {result.PERCENTAGE}
-                  </td>
-                  <td style={{ padding: '16px 20px', textAlign: 'center' }}>
-                    <span style={{
-                      padding: '6px 12px',
-                      borderRadius: '8px',
-                      fontSize: '0.85em',
-                      fontWeight: 'bold',
-                      backgroundColor: result.STATUS && result.STATUS.toUpperCase() === 'PASS' ? '#d4edda' : '#f8d7da',
-                      color: result.STATUS && result.STATUS.toUpperCase() === 'PASS' ? '#155724' : '#721c24'
-                    }}>
-                      {result.STATUS}
-                    </span>
-                  </td>
-                  <td style={{ padding: '16px 20px', textAlign: 'center', fontSize: '0.9em', color: colors.textMuted }}>
-                    {result.DATE}
-                  </td>
-                  <td style={{ padding: '16px 20px', textAlign: 'center' }}>
-                    <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
-                      <button
-                        onClick={() => handleEdit(result)}
-                        style={{
-                          padding: '8px',
-                          backgroundColor: '#1a1a2e',
-                          color: 'white',
-                          border: '2px solid #1a1a2e',
-                          borderRadius: '28px',
-                          cursor: 'pointer',
-                          marginRight: '8px',
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          transition: 'all 0.2s ease'
-                        }}
-                        title="Edit Practical Result"
-                        onMouseOver={(e) => {
-                          e.currentTarget.style.backgroundColor = '#e1e2e2ff';
-                          e.currentTarget.style.color = '#1a1a2e';
-                        }}
-                        onMouseOut={(e) => {
-                          e.currentTarget.style.backgroundColor = '#1a1a2e';
-                          e.currentTarget.style.color = 'white';
-                        }}
-                      >
-                        <Edit2 size={16} />
-                      </button>
-                      <button
-                        onClick={() => handleDelete(result)}
-                        style={{
-                          padding: '8px',
-                          background: 'linear-gradient(120deg, #c0392b, #e74c3c)',
-                          color: 'white',
-                          border: '2px solid transparent',
-                          borderRadius: '28px',
-                          cursor: 'pointer',
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          transition: 'all 0.2s ease'
-                        }}
-                        title="Delete Practical Result"
-                        onMouseOver={(e) => {
-                          e.currentTarget.style.background = '#e1e2e2ff';
-                          e.currentTarget.style.border = '2px solid #c0392b';
-                          e.currentTarget.style.color = '#c0392b';
-                        }}
-                        onMouseOut={(e) => {
-                          e.currentTarget.style.background = 'linear-gradient(120deg, #c0392b, #e74c3c)';
-                          e.currentTarget.style.border = '2px solid transparent';
-                          e.currentTarget.style.color = 'white';
-                        }}
-                      >
-                        <Trash2 size={16} />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
+              {paginatedPracticalResults.map((result, index) => {
+                const hasAttachment = String(result.HAS_PRACTICAL_ATTACHMENT) === '1' || result.HAS_PRACTICAL_ATTACHMENT === 1;
+
+                return (
+                  <tr key={index} style={{
+                    borderBottom: `1px solid ${colors.border}`,
+                    transition: 'background-color 0.2s',
+                    backgroundColor: isDarkMode ? colors.tableRowBg : 'transparent'
+                  }}>
+                    <td style={{ padding: '16px 20px', color: colors.text }}>{result.ID}</td>
+                    <td style={{ padding: '16px 20px', color: colors.text }}>{result.NAME}</td>
+                    <td style={{ padding: '16px 20px', color: colors.text }}>{result.STANDARD}</td>
+                    <td style={{ padding: '16px 20px', textAlign: 'center', fontWeight: 'bold', color: colors.text }}>
+                      {result.PERCENTAGE}
+                    </td>
+                    <td style={{ padding: '16px 20px', textAlign: 'center' }}>
+                      <span style={{
+                        padding: '6px 12px',
+                        borderRadius: '8px',
+                        fontSize: '0.85em',
+                        fontWeight: 'bold',
+                        backgroundColor: result.STATUS && result.STATUS.toUpperCase() === 'PASS' ? '#d4edda' : '#f8d7da',
+                        color: result.STATUS && result.STATUS.toUpperCase() === 'PASS' ? '#155724' : '#721c24'
+                      }}>
+                        {result.STATUS}
+                      </span>
+                    </td>
+                    <td style={{ padding: '16px 20px', textAlign: 'center', fontSize: '0.9em', color: colors.textMuted }}>
+                      {result.DATE}
+                    </td>
+                    <td style={{ padding: '16px 20px', textAlign: 'center' }}>
+                      <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
+                        <button
+                          onClick={() => downloadPracticalAttachment(result)}
+                          disabled={!hasAttachment}
+                          style={{
+                            padding: '8px',
+                            backgroundColor: hasAttachment ? '#1a1a2e' : '#95a5a6',
+                            color: 'white',
+                            border: hasAttachment ? '2px solid #1a1a2e' : '2px solid #95a5a6',
+                            borderRadius: '28px',
+                            cursor: hasAttachment ? 'pointer' : 'not-allowed',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            transition: 'all 0.2s ease'
+                          }}
+                          title={hasAttachment ? 'Download Attachment' : 'No attachment available'}
+                          onMouseOver={(e) => {
+                            if (!hasAttachment) return;
+                            e.currentTarget.style.backgroundColor = '#e1e2e2ff';
+                            e.currentTarget.style.color = '#1a1a2e';
+                          }}
+                          onMouseOut={(e) => {
+                            e.currentTarget.style.backgroundColor = hasAttachment ? '#1a1a2e' : '#95a5a6';
+                            e.currentTarget.style.color = 'white';
+                          }}
+                        >
+                          <Download size={16} />
+                        </button>
+                        <button
+                          onClick={() => handleEdit(result)}
+                          style={{
+                            padding: '8px',
+                            backgroundColor: '#1a1a2e',
+                            color: 'white',
+                            border: '2px solid #1a1a2e',
+                            borderRadius: '28px',
+                            cursor: 'pointer',
+                            marginRight: '8px',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            transition: 'all 0.2s ease'
+                          }}
+                          title="Edit Practical Result"
+                          onMouseOver={(e) => {
+                            e.currentTarget.style.backgroundColor = '#e1e2e2ff';
+                            e.currentTarget.style.color = '#1a1a2e';
+                          }}
+                          onMouseOut={(e) => {
+                            e.currentTarget.style.backgroundColor = '#1a1a2e';
+                            e.currentTarget.style.color = 'white';
+                          }}
+                        >
+                          <Edit2 size={16} />
+                        </button>
+                        <button
+                          onClick={() => handleDelete(result)}
+                          style={{
+                            padding: '8px',
+                            background: 'linear-gradient(120deg, #c0392b, #e74c3c)',
+                            color: 'white',
+                            border: '2px solid transparent',
+                            borderRadius: '28px',
+                            cursor: 'pointer',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            transition: 'all 0.2s ease'
+                          }}
+                          title="Delete Practical Result"
+                          onMouseOver={(e) => {
+                            e.currentTarget.style.background = '#e1e2e2ff';
+                            e.currentTarget.style.border = '2px solid #c0392b';
+                            e.currentTarget.style.color = '#c0392b';
+                          }}
+                          onMouseOut={(e) => {
+                            e.currentTarget.style.background = 'linear-gradient(120deg, #c0392b, #e74c3c)';
+                            e.currentTarget.style.border = '2px solid transparent';
+                            e.currentTarget.style.color = 'white';
+                          }}
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
               {practicalResults.length === 0 && (
                 <tr>
                   <td colSpan="7" style={{ padding: '40px', textAlign: 'center', color: colors.textMuted }}>
@@ -4197,7 +6557,114 @@ const TestingModule = () => {
                 </tr>
               )}
             </tbody>
-          </table>
+            </table>
+          </div>
+
+          {totalPracticalPages > 1 && (
+            <div style={{
+              display: 'flex',
+              justifyContent: 'center',
+              alignItems: 'center',
+              gap: '10px',
+              flexWrap: 'wrap',
+              padding: '14px 16px',
+              backgroundColor: colors.cardBg,
+              borderTop: `1px solid ${colors.border}`
+            }}>
+              <button
+                onClick={() => setPracticalCurrentPage(prev => Math.max(1, prev - 1))}
+                disabled={practicalCurrentPage === 1}
+                style={{
+                  padding: '8px 16px',
+                  backgroundColor: practicalCurrentPage === 1 ? colors.border : '#1a1a2e',
+                  color: practicalCurrentPage === 1 ? colors.textMuted : 'white',
+                  border: 'none',
+                  borderRadius: '8px',
+                  cursor: practicalCurrentPage === 1 ? 'not-allowed' : 'pointer',
+                  fontWeight: '600',
+                  fontSize: '14px',
+                  transition: 'all 0.2s ease'
+                }}
+              >
+                Previous
+              </button>
+
+              <span style={{
+                color: colors.text,
+                fontWeight: '600',
+                fontSize: '14px',
+                padding: '0 10px'
+              }}>
+                Page {practicalCurrentPage} of {totalPracticalPages} ({practicalResults.length} results)
+              </span>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <span style={{ color: colors.textMuted, fontWeight: '600', fontSize: '12px' }}>Go to</span>
+                <input
+                  type="number"
+                  min="1"
+                  max={totalPracticalPages}
+                  value={practicalGoToPage}
+                  onChange={(e) => setPracticalGoToPage(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key !== 'Enter') return;
+                    const nextPage = parseInt(practicalGoToPage, 10);
+                    if (!Number.isFinite(nextPage)) return;
+                    setPracticalCurrentPage(Math.min(totalPracticalPages, Math.max(1, nextPage)));
+                    setPracticalGoToPage('');
+                  }}
+                  style={{
+                    width: '70px',
+                    padding: '6px 10px',
+                    border: `1px solid ${colors.border}`,
+                    borderRadius: '8px',
+                    fontSize: '14px',
+                    textAlign: 'center',
+                    backgroundColor: colors.cardAltBg,
+                    color: colors.text
+                  }}
+                />
+                <button
+                  onClick={() => {
+                    const nextPage = parseInt(practicalGoToPage, 10);
+                    if (!Number.isFinite(nextPage)) return;
+                    setPracticalCurrentPage(Math.min(totalPracticalPages, Math.max(1, nextPage)));
+                    setPracticalGoToPage('');
+                  }}
+                  style={{
+                    padding: '6px 12px',
+                    backgroundColor: '#1a1a2e',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '8px',
+                    cursor: 'pointer',
+                    fontWeight: '600',
+                    fontSize: '13px'
+                  }}
+                >
+                  Go
+                </button>
+              </div>
+
+              <button
+                onClick={() => setPracticalCurrentPage(prev => Math.min(totalPracticalPages, prev + 1))}
+                disabled={practicalCurrentPage === totalPracticalPages}
+                style={{
+                  padding: '8px 16px',
+                  backgroundColor: practicalCurrentPage === totalPracticalPages ? colors.border : '#1a1a2e',
+                  color: practicalCurrentPage === totalPracticalPages ? colors.textMuted : 'white',
+                  border: 'none',
+                  borderRadius: '8px',
+                  cursor: practicalCurrentPage === totalPracticalPages ? 'not-allowed' : 'pointer',
+                  fontWeight: '600',
+                  fontSize: '14px',
+                  transition: 'all 0.2s ease'
+                }}
+              >
+                Next
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Add Practical Result Modal */}
@@ -4219,10 +6686,10 @@ const TestingModule = () => {
           }}>
             <div style={{
               backgroundColor: theme.bg.card,
-              padding: '35px',
+              padding: isMobile ? '22px 16px' : '35px',
               borderRadius: '28px',
               width: '100%',
-              maxWidth: '650px',
+              maxWidth: isMobile ? '100%' : '650px',
               maxHeight: '90vh',
               overflowY: 'auto',
               boxShadow: `0 20px 60px ${isDarkMode ? 'rgba(0,0,0,0.5)' : 'rgba(0, 0, 0, 0.3)'}`,
@@ -4241,7 +6708,7 @@ const TestingModule = () => {
               </h3>
               
               <form onSubmit={handleSubmit}>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px', marginBottom: '22px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: twoColumnGrid, gap: '15px', marginBottom: '22px' }}>
                   <div>
                     <label style={{ 
                       display: 'block', 
@@ -4283,7 +6750,7 @@ const TestingModule = () => {
                       onBlur={e => !editMode && (e.target.style.borderColor = colors.inputBorder)}
                     >
                       <option value="">Select ID</option>
-                      {[...new Set(eligibleEmployees.map(emp => emp.empId))].map(empId => (
+                      {eligibleEmployeeIds.map(empId => (
                         <option key={empId} value={empId}>
                           {empId}
                         </option>
@@ -4331,7 +6798,7 @@ const TestingModule = () => {
                       onBlur={e => !editMode && (e.target.style.borderColor = colors.inputBorder)}
                     >
                       <option value="">Select Name</option>
-                      {[...new Set(eligibleEmployees.map(emp => emp.empName))].map(empName => (
+                      {eligibleEmployeeNames.map(empName => (
                         <option key={empName} value={empName}>
                           {empName}
                         </option>
@@ -4381,7 +6848,7 @@ const TestingModule = () => {
                   </select>
                 </div>
 
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px', marginBottom: '22px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: twoColumnGrid, gap: '15px', marginBottom: '22px' }}>
                   <div>
                     <label style={{ 
                       display: 'block', 
@@ -4397,10 +6864,8 @@ const TestingModule = () => {
                       min="1"
                       value={formData.totalQuestions}
                       onChange={(e) => {
-                        const total = parseInt(e.target.value) || 0;
-                        const correct = parseInt(formData.correctAnswers) || 0;
-                        const percentage = total > 0 ? ((correct / total) * 100).toFixed(2) : '';
-                        setFormData({ ...formData, totalQuestions: e.target.value, percentage });
+                        setIsPracticalPercentageManuallyEdited(false);
+                        setFormData({ ...formData, totalQuestions: e.target.value });
                       }}
                       required
                       style={{
@@ -4435,10 +6900,8 @@ const TestingModule = () => {
                       min="0"
                       value={formData.correctAnswers}
                       onChange={(e) => {
-                        const correct = parseInt(e.target.value) || 0;
-                        const total = parseInt(formData.totalQuestions) || 0;
-                        const percentage = total > 0 ? ((correct / total) * 100).toFixed(2) : '';
-                        setFormData({ ...formData, correctAnswers: e.target.value, percentage });
+                        setIsPracticalPercentageManuallyEdited(false);
+                        setFormData({ ...formData, correctAnswers: e.target.value });
                       }}
                       required
                       style={{
@@ -4460,7 +6923,7 @@ const TestingModule = () => {
                   </div>
                 </div>
 
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px', marginBottom: '22px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: twoColumnGrid, gap: '15px', marginBottom: '22px' }}>
                   <div>
                     <label style={{ 
                       display: 'block', 
@@ -4469,24 +6932,38 @@ const TestingModule = () => {
                       color: colors.text,
                       fontSize: '0.95em'
                     }}>
-                      Percentage (Auto-calculated):
+                      Percentage (%):
                     </label>
                     <input
-                      type="text"
-                      value={formData.percentage ? `${formData.percentage}%` : ''}
-                      disabled
+                      type="number"
+                      min="0"
+                      max="100"
+                      step="0.01"
+                      value={formData.percentage}
+                      onChange={(e) => {
+                        setIsPracticalPercentageManuallyEdited(true);
+                        setFormData({ ...formData, percentage: e.target.value });
+                      }}
+                      required
                       style={{
                         width: '100%',
                         padding: '12px 15px',
                         border: `2px solid ${colors.inputBorder}`,
                         borderRadius: '4px',
                         fontSize: '15px',
-                        backgroundColor: colors.cardAltBg,
+                        transition: 'border-color 0.2s ease',
+                        outline: 'none',
+                        backgroundColor: colors.inputBg,
                         color: colors.text,
                         boxSizing: 'border-box'
                       }}
-                      placeholder="Auto-calculated"
+                      onFocus={e => e.target.style.borderColor = '#1a1a2e'}
+                      onBlur={e => e.target.style.borderColor = colors.inputBorder}
+                      placeholder="Auto calculated (editable)"
                     />
+                    <div style={{ marginTop: '6px', fontSize: '12px', color: colors.textMuted }}>
+                      Auto formula: Correct / Total x 100
+                    </div>
                   </div>
                   <div>
                     <label style={{ 
@@ -4504,6 +6981,7 @@ const TestingModule = () => {
                       max="100"
                       value={formData.passingCriteria}
                       onChange={(e) => setFormData({ ...formData, passingCriteria: e.target.value })}
+                      required
                       style={{
                         width: '100%',
                         padding: '12px 15px',
@@ -4522,6 +7000,109 @@ const TestingModule = () => {
                   </div>
                 </div>
 
+                <div style={{ marginBottom: '22px' }}>
+                  <label style={{
+                    display: 'block',
+                    marginBottom: '8px',
+                    fontWeight: '600',
+                    color: colors.text,
+                    fontSize: '0.95em'
+                  }}>
+                    Attachment (PDF, DOC, DOCX):
+                  </label>
+                  {editMode && currentResult && (String(currentResult.HAS_PRACTICAL_ATTACHMENT) === '1' || currentResult.HAS_PRACTICAL_ATTACHMENT === 1) && (
+                    <div style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '10px',
+                      padding: '10px 12px',
+                      borderRadius: '8px',
+                      backgroundColor: colors.cardAltBg,
+                      border: `1px solid ${colors.inputBorder}`,
+                      marginBottom: '10px'
+                    }}>
+                      <span style={{ color: colors.text, fontSize: '0.9em' }}>
+                        Current: {currentResult.PRACTICAL_ATTACHMENT_NAME || 'Attachment'}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => downloadPracticalAttachment(currentResult)}
+                        style={{
+                          padding: '6px 12px',
+                          backgroundColor: '#1a1a2e',
+                          color: '#fff',
+                          border: 'none',
+                          borderRadius: '20px',
+                          cursor: 'pointer',
+                          fontSize: '12px',
+                          fontWeight: '600'
+                        }}
+                      >
+                        Download
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => removePracticalAttachment(currentResult)}
+                        style={{
+                          padding: '6px 12px',
+                          backgroundColor: '#c0392b',
+                          color: '#fff',
+                          border: 'none',
+                          borderRadius: '20px',
+                          cursor: 'pointer',
+                          fontSize: '12px',
+                          fontWeight: '600'
+                        }}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  )}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                    <button
+                      type="button"
+                      onClick={() => attachmentInputRef.current?.click()}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.background = '#fff';
+                        e.currentTarget.style.color = '#c0392b';
+                        e.currentTarget.style.border = '2px solid #c0392b';
+                        e.currentTarget.style.transform = 'translateY(-2px)';
+                        e.currentTarget.style.boxShadow = '0 6px 20px rgba(192, 57, 43, 0.4)';
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.background = 'linear-gradient(120deg, #c0392b, #e74c3c)';
+                        e.currentTarget.style.color = '#fff';
+                        e.currentTarget.style.border = '2px solid transparent';
+                        e.currentTarget.style.transform = 'translateY(0)';
+                        e.currentTarget.style.boxShadow = 'none';
+                      }}
+                      style={{
+                        padding: '10px 16px',
+                        background: 'linear-gradient(120deg, #c0392b, #e74c3c)',
+                        color: '#fff',
+                        border: '2px solid transparent',
+                        borderRadius: '8px',
+                        cursor: 'pointer',
+                        fontSize: '13px',
+                        fontWeight: '600',
+                        transition: 'all 0.2s ease'
+                      }}
+                    >
+                      Choose File
+                    </button>
+                    <span style={{ fontSize: '12px', color: colors.textMuted }}>
+                      {attachmentFile ? attachmentFile.name : 'No file chosen'}
+                    </span>
+                  </div>
+                  <input
+                    ref={attachmentInputRef}
+                    type="file"
+                    accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                    onChange={handleAttachmentChange}
+                    style={{ display: 'none' }}
+                  />
+                </div>
+
                 <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '30px', paddingTop: '25px', borderTop: '2px solid #ecf0f1' }}>
                   <button
                     type="button"
@@ -4529,7 +7110,9 @@ const TestingModule = () => {
                       setShowModal(false);
                       setEditMode(false);
                       setCurrentResult(null);
-                      setFormData({ employeeId: '', employeeName: '', standard: '', standardFullName: '', totalQuestions: '100', correctAnswers: '', percentage: '', passingCriteria: '70' });
+                      setIsPracticalPercentageManuallyEdited(false);
+                      setFormData({ employeeId: '', employeeName: '', standard: '', standardFullName: '', totalQuestions: '100', correctAnswers: '', percentage: '', passingCriteria: '75' });
+                      resetAttachment();
                     }}
                     style={{
                       padding: '12px 30px',
@@ -4587,10 +7170,16 @@ const TestingModule = () => {
         )}
       </div>
     );
-  };
+  }; }, []);
 
   // Employee Management Page
-  const EmployeesAdminPage = () => {
+  const EmployeesAdminPage = useMemo(() => { return function EmployeesAdminPageInner() {
+    // Shadow outer-scope variables with fresh values from refs.
+    const employees = employeesRef.current;
+    const theme = themeRef.current;
+    const isDarkMode = isDarkModeRef.current;
+    const isMobile = isMobileRef.current;
+    const colors = colorsRef.current;
     const [localEmployees, setLocalEmployees] = useState(employees);
     const [showModal, setShowModal] = useState(false);
     const [editMode, setEditMode] = useState(false);
@@ -4600,6 +7189,9 @@ const TestingModule = () => {
     const [saving, setSaving] = useState(false);
     const [searchType, setSearchType] = useState('id'); // 'id' or 'name'
     const [searchQuery, setSearchQuery] = useState('');
+    const [employeeCurrentPage, setEmployeeCurrentPage] = useState(1);
+    const [employeeGoToPage, setEmployeeGoToPage] = useState('');
+    const employeeItemsPerPage = 50;
 
     useEffect(() => setLocalEmployees(employees), [employees]);
 
@@ -4612,6 +7204,22 @@ const TestingModule = () => {
         return String(emp.Name).toLowerCase().includes(searchQuery.toLowerCase());
       }
     });
+
+    const totalEmployeePages = Math.ceil(filteredEmployees.length / employeeItemsPerPage);
+    const paginatedEmployees = filteredEmployees.slice(
+      (employeeCurrentPage - 1) * employeeItemsPerPage,
+      employeeCurrentPage * employeeItemsPerPage
+    );
+
+    useEffect(() => {
+      setEmployeeCurrentPage(1);
+    }, [searchType, searchQuery]);
+
+    useEffect(() => {
+      if (totalEmployeePages > 0 && employeeCurrentPage > totalEmployeePages) {
+        setEmployeeCurrentPage(totalEmployeePages);
+      }
+    }, [employeeCurrentPage, totalEmployeePages]);
 
     const refreshEmployees = async () => {
       const data = await fetchData('/employees');
@@ -4628,14 +7236,16 @@ const TestingModule = () => {
 
     const handleEdit = (employee) => {
       setEditMode(true);
-      setCurrentEmployee(employee.ID);
+      setCurrentEmployee(String(employee.ID));
       setFormData({ ID: employee.ID, Name: employee.Name });
       setShowModal(true);
     };
 
     const handleSubmit = async (e) => {
       e.preventDefault();
-      const id = String(formData.ID || '').trim();
+      const addModeId = String(formData.ID || '').trim();
+      const editModeId = String(currentEmployee ?? formData.ID ?? '');
+      const id = editMode ? editModeId : addModeId;
       const name = String(formData.Name || '').trim();
       
       if (!id || !name) {
@@ -4646,16 +7256,41 @@ const TestingModule = () => {
       setSaving(true);
       try {
         if (editMode) {
-          await updateEmployee({ ID: id, Name: name });
+          // Use upsert endpoint in edit mode as well for safer name updates.
+          await createEmployee({ ID: id, Name: name });
+          setEmployees(prev => prev.map(emp =>
+            String(emp.ID) === String(id) ? { ...emp, Name: name } : emp
+          ));
+          setLocalEmployees(prev => prev.map(emp =>
+            String(emp.ID) === String(id) ? { ...emp, Name: name } : emp
+          ));
           setMsg('Employee updated successfully');
           showToast('Employee updated successfully!', 'success');
         } else {
           await createEmployee({ ID: id, Name: name });
+          setEmployees(prev => {
+            const exists = prev.some(emp => String(emp.ID) === String(id));
+            if (exists) {
+              return prev.map(emp => (String(emp.ID) === String(id) ? { ...emp, Name: name } : emp));
+            }
+            return [...prev, { ID: id, Name: name }];
+          });
+          setLocalEmployees(prev => {
+            const exists = prev.some(emp => String(emp.ID) === String(id));
+            if (exists) {
+              return prev.map(emp => (String(emp.ID) === String(id) ? { ...emp, Name: name } : emp));
+            }
+            return [...prev, { ID: id, Name: name }];
+          });
           setMsg('Employee added successfully');
           showToast('Employee added successfully!', 'success');
         }
         await refreshEmployees();
+        await loadResults();
         setShowModal(false);
+        setEditMode(false);
+        setCurrentEmployee(null);
+        setFormData({ ID: '', Name: '' });
         setTimeout(() => setMsg(''), 3000);
       } catch (error) {
         showToast(`Failed: ${error.message}`, 'error');
@@ -4739,7 +7374,7 @@ const TestingModule = () => {
               alignItems: 'center',
               flexWrap: 'wrap'
             }}>
-            <div style={{ minWidth: '180px' }}>
+            <div style={{ minWidth: isMobile ? '100%' : '180px' }}>
               <select
                 value={searchType}
                 onChange={(e) => setSearchType(e.target.value)}
@@ -4760,7 +7395,7 @@ const TestingModule = () => {
                 <option value="name">Employee Name</option>
               </select>
             </div>
-            <div style={{ flex: '1', minWidth: '250px' }}>
+            <div style={{ flex: '1', minWidth: isMobile ? '100%' : '250px' }}>
               <input
                 type="text"
                 placeholder={`Search by ${searchType === 'id' ? 'Employee ID' : 'Employee Name'}...`}
@@ -4790,17 +7425,23 @@ const TestingModule = () => {
               />
             </div>
             <button
-              onClick={() => setSearchQuery('')}
+              onClick={() => {
+                setSearchQuery('');
+                setEmployeeCurrentPage(1);
+              }}
               disabled={!searchQuery}
               style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
                 padding: '12px 24px',
                 backgroundColor: colors.inputBg,
                 color: colors.textMuted,
                 border: `2px solid ${colors.inputBorder}`,
                 borderRadius: '28px',
                 cursor: searchQuery ? 'pointer' : 'not-allowed',
-                fontSize: '14px',
-                fontWeight: '600',
+                fontSize: '0.95em',
+                fontWeight: '500',
                 opacity: searchQuery ? 1 : 0.5,
                 transition: 'all 0.2s ease'
               }}
@@ -4817,6 +7458,13 @@ const TestingModule = () => {
                 e.currentTarget.style.backgroundColor = colors.inputBg;
               }}
             >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                <polyline points="3 6 5 6 21 6"></polyline>
+                <path d="M19 6l-1 14H6L5 6"></path>
+                <path d="M10 11v6"></path>
+                <path d="M14 11v6"></path>
+                <path d="M9 6V4h6v2"></path>
+              </svg>
               Clear Filter
             </button>
             </div>
@@ -4840,7 +7488,7 @@ const TestingModule = () => {
                   </tr>
               </thead>
               <tbody>
-                {filteredEmployees.map((employee, index) => (
+                {paginatedEmployees.map((employee, index) => (
                   <tr key={index} style={{ 
                     borderBottom: `1px solid ${colors.border}`,
                     backgroundColor: isDarkMode ? colors.tableRowBg : 'transparent'
@@ -4916,6 +7564,112 @@ const TestingModule = () => {
               </tbody>
             </table>
             </div>
+
+            {totalEmployeePages > 1 && (
+              <div style={{
+                display: 'flex',
+                justifyContent: 'center',
+                alignItems: 'center',
+                gap: '10px',
+                flexWrap: 'wrap',
+                padding: '14px 16px',
+                backgroundColor: colors.cardBg,
+                borderTop: `1px solid ${colors.border}`
+              }}>
+                <button
+                  onClick={() => setEmployeeCurrentPage(prev => Math.max(1, prev - 1))}
+                  disabled={employeeCurrentPage === 1}
+                  style={{
+                    padding: '8px 16px',
+                    backgroundColor: employeeCurrentPage === 1 ? colors.border : '#1a1a2e',
+                    color: employeeCurrentPage === 1 ? colors.textMuted : 'white',
+                    border: 'none',
+                    borderRadius: '8px',
+                    cursor: employeeCurrentPage === 1 ? 'not-allowed' : 'pointer',
+                    fontWeight: '600',
+                    fontSize: '14px',
+                    transition: 'all 0.2s ease'
+                  }}
+                >
+                  Previous
+                </button>
+
+                <span style={{
+                  color: colors.text,
+                  fontWeight: '600',
+                  fontSize: '14px',
+                  padding: '0 10px'
+                }}>
+                  Page {employeeCurrentPage} of {totalEmployeePages} ({filteredEmployees.length} employees)
+                </span>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <span style={{ color: colors.textMuted, fontWeight: '600', fontSize: '12px' }}>Go to</span>
+                  <input
+                    type="number"
+                    min="1"
+                    max={totalEmployeePages}
+                    value={employeeGoToPage}
+                    onChange={(e) => setEmployeeGoToPage(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key !== 'Enter') return;
+                      const nextPage = parseInt(employeeGoToPage, 10);
+                      if (!Number.isFinite(nextPage)) return;
+                      setEmployeeCurrentPage(Math.min(totalEmployeePages, Math.max(1, nextPage)));
+                      setEmployeeGoToPage('');
+                    }}
+                    style={{
+                      width: '70px',
+                      padding: '6px 10px',
+                      border: `1px solid ${colors.border}`,
+                      borderRadius: '8px',
+                      fontSize: '14px',
+                      textAlign: 'center',
+                      backgroundColor: colors.cardAltBg,
+                      color: colors.text
+                    }}
+                  />
+                  <button
+                    onClick={() => {
+                      const nextPage = parseInt(employeeGoToPage, 10);
+                      if (!Number.isFinite(nextPage)) return;
+                      setEmployeeCurrentPage(Math.min(totalEmployeePages, Math.max(1, nextPage)));
+                      setEmployeeGoToPage('');
+                    }}
+                    style={{
+                      padding: '6px 12px',
+                      backgroundColor: '#1a1a2e',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '8px',
+                      cursor: 'pointer',
+                      fontWeight: '600',
+                      fontSize: '13px'
+                    }}
+                  >
+                    Go
+                  </button>
+                </div>
+
+                <button
+                  onClick={() => setEmployeeCurrentPage(prev => Math.min(totalEmployeePages, prev + 1))}
+                  disabled={employeeCurrentPage === totalEmployeePages}
+                  style={{
+                    padding: '8px 16px',
+                    backgroundColor: employeeCurrentPage === totalEmployeePages ? colors.border : '#1a1a2e',
+                    color: employeeCurrentPage === totalEmployeePages ? colors.textMuted : 'white',
+                    border: 'none',
+                    borderRadius: '8px',
+                    cursor: employeeCurrentPage === totalEmployeePages ? 'not-allowed' : 'pointer',
+                    fontWeight: '600',
+                    fontSize: '14px',
+                    transition: 'all 0.2s ease'
+                  }}
+                >
+                  Next
+                </button>
+              </div>
+            )}
           </div>
 
         {showModal && (
@@ -4936,10 +7690,10 @@ const TestingModule = () => {
           }}>
             <div style={{
               backgroundColor: theme.bg.card,
-              padding: '35px',
+              padding: isMobile ? '22px 16px' : '35px',
               borderRadius: '28px',
               width: '100%',
-              maxWidth: '550px',
+              maxWidth: isMobile ? '100%' : '550px',
               maxHeight: '90vh',
               overflowY: 'auto',
               boxShadow: `0 20px 60px ${isDarkMode ? 'rgba(0,0,0,0.5)' : 'rgba(0, 0, 0, 0.3)'}`,
@@ -5079,21 +7833,13 @@ const TestingModule = () => {
         )}
       </div>
     );
-  };
+  }; }, []);
 
   // Main Render
   return (
     <>
       {/* Toast Notifications */}
-      {toasts.map(toast => (
-        <Toast
-          key={toast.id}
-          message={toast.message}
-          type={toast.type}
-          onClose={() => removeToast(toast.id)}
-          isDarkMode={isDarkMode}
-        />
-      ))}
+      <ToastHost isDarkMode={isDarkMode} />
 
       {currentPage === 'home' && <HomePage 
         activeLoginForm={activeLoginForm}

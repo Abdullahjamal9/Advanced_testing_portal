@@ -3,21 +3,147 @@ const express = require('express');
 const mysql = require('mysql2');
 const cors = require('cors');
 const PDFDocument = require('pdfkit');
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const multer = require('multer');
 require('dotenv').config();
 
 const app = express();
 
+/* ----------------------- Attachments Setup ---------------------- */
+const PRACTICAL_ATTACHMENTS_DIR = path.resolve(__dirname, 'practical-attachments');
+const PRACTICAL_ATTACHMENT_MAX_BYTES = 20 * 1024 * 1024; // 20MB
+const ALLOWED_ATTACHMENT_MIME_TYPES = new Set([
+  'application/pdf',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+]);
+const ALLOWED_ATTACHMENT_EXTENSIONS = new Set(['.pdf', '.doc', '.docx']);
+const MIME_EXTENSION_MAP = {
+  'application/pdf': '.pdf',
+  'application/msword': '.doc',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '.docx'
+};
+
+/* ------------------ Certificate Templates Setup ---------------- */
+const CERTIFICATE_TEMPLATES_DIR = path.resolve(__dirname, '..', 'certificates', 'templates');
+const CERTIFICATE_TEMPLATE_MAX_BYTES = 25 * 1024 * 1024; // 25MB
+const ALLOWED_TEMPLATE_MIME_TYPES = new Set(['application/pdf']);
+const ALLOWED_TEMPLATE_EXTENSIONS = new Set(['.pdf']);
+
+if (!fs.existsSync(PRACTICAL_ATTACHMENTS_DIR)) {
+  fs.mkdirSync(PRACTICAL_ATTACHMENTS_DIR, { recursive: true });
+}
+
+if (!fs.existsSync(CERTIFICATE_TEMPLATES_DIR)) {
+  fs.mkdirSync(CERTIFICATE_TEMPLATES_DIR, { recursive: true });
+}
+
+const sanitizeBaseName = (name) => {
+  const base = path.basename(name || '', path.extname(name || '')).trim();
+  const cleaned = base.replace(/[^a-zA-Z0-9_-]+/g, '_').replace(/^_+|_+$/g, '');
+  return cleaned.slice(0, 80) || 'attachment';
+};
+
+const sanitizeTemplateBaseName = (name) => {
+  const base = path.basename(name || '', path.extname(name || '')).trim();
+  const cleaned = base.replace(/[^a-zA-Z0-9_-]+/g, '_').replace(/^_+|_+$/g, '');
+  return cleaned.slice(0, 80) || 'template';
+};
+
+const attachmentStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, PRACTICAL_ATTACHMENTS_DIR),
+  filename: (_req, file, cb) => {
+    const originalExt = path.extname(file.originalname || '').toLowerCase();
+    const ext = originalExt || MIME_EXTENSION_MAP[file.mimetype] || '';
+    const base = sanitizeBaseName(file.originalname);
+    const randomTag = crypto.randomBytes(6).toString('hex');
+    cb(null, `${Date.now()}_${randomTag}_${base}${ext}`);
+  }
+});
+
+const attachmentUpload = multer({
+  storage: attachmentStorage,
+  limits: { fileSize: PRACTICAL_ATTACHMENT_MAX_BYTES },
+  fileFilter: (_req, file, cb) => {
+    const ext = path.extname(file.originalname || '').toLowerCase();
+    const mimeOk = ALLOWED_ATTACHMENT_MIME_TYPES.has(file.mimetype);
+    const extOk = ALLOWED_ATTACHMENT_EXTENSIONS.has(ext);
+    if (mimeOk || extOk) return cb(null, true);
+    return cb(new Error('Unsupported attachment type. Only PDF, DOC, DOCX files are allowed.'));
+  }
+});
+
+const templateStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, CERTIFICATE_TEMPLATES_DIR),
+  filename: (req, file, cb) => {
+    const explicitName = String(req.body?.template_name || '').trim();
+    const standardName = String(req.body?.standard || '').trim();
+    const baseSource = explicitName || standardName || file.originalname;
+    const base = sanitizeTemplateBaseName(baseSource);
+    cb(null, `${base}.pdf`);
+  }
+});
+
+const templateUpload = multer({
+  storage: templateStorage,
+  limits: { fileSize: CERTIFICATE_TEMPLATE_MAX_BYTES },
+  fileFilter: (_req, file, cb) => {
+    const ext = path.extname(file.originalname || '').toLowerCase();
+    const mimeOk = ALLOWED_TEMPLATE_MIME_TYPES.has(file.mimetype);
+    const extOk = ALLOWED_TEMPLATE_EXTENSIONS.has(ext);
+    if (mimeOk || extOk) return cb(null, true);
+    return cb(new Error('Unsupported template type. Only PDF files are allowed.'));
+  }
+});
+
+const resolveAttachmentPath = (relativePath) => {
+  if (!relativePath) return null;
+  const absolutePath = path.resolve(__dirname, relativePath);
+  const safeRoot = PRACTICAL_ATTACHMENTS_DIR + path.sep;
+  if (!absolutePath.startsWith(safeRoot)) return null;
+  return absolutePath;
+};
+
+const deleteAttachmentFile = async (relativePath) => {
+  const absolutePath = resolveAttachmentPath(relativePath);
+  if (!absolutePath) return;
+  try {
+    if (fs.existsSync(absolutePath)) {
+      await fs.promises.unlink(absolutePath);
+    }
+  } catch (err) {
+    console.warn('Failed to delete attachment file:', err.message);
+  }
+};
+
 /* -------------------------- Middleware -------------------------- */
 app.use(express.json({ limit: '50mb' })); // Increased limit for Excel uploads
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
+const allowedOrigins = new Set([
+  'http://localhost:3000',
+  'http://localhost:3001',
+  process.env.FRONTEND_URL
+].filter(Boolean));
+
 app.use(cors({
-  origin: [
-    'http://localhost:3000',
-    'http://localhost:3001',
-    process.env.FRONTEND_URL // Add your deployed frontend URL here
-  ].filter(Boolean),
+  origin: (origin, callback) => {
+    // Allow server-to-server / curl / same-origin requests with no Origin header.
+    if (!origin) return callback(null, true);
+
+    // Explicit allow-list.
+    if (allowedOrigins.has(origin)) return callback(null, true);
+
+    // Common local/tunnel patterns.
+    if (/^https?:\/\/localhost(:\d+)?$/i.test(origin)) return callback(null, true);
+    if (/^https?:\/\/127\.0\.0\.1(:\d+)?$/i.test(origin)) return callback(null, true);
+    if (/^https:\/\/.*\.github\.dev$/i.test(origin)) return callback(null, true);
+    if (/^https:\/\/.*\.app\.github\.dev$/i.test(origin)) return callback(null, true);
+
+    // Keep this permissive for shared-port usage; tighten in production if needed.
+    return callback(null, true);
+  },
   credentials: true
 }));
 
@@ -41,6 +167,60 @@ const pool = mysql.createPool({
   queueLimit: 0
 }).promise();
 
+async function ensureCertificateHistoryTable() {
+  try {
+    await pool.query(
+      `CREATE TABLE IF NOT EXISTS certificate_generation_log (
+        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+        emp_id VARCHAR(100) NOT NULL,
+        standard VARCHAR(255) NOT NULL,
+        certification_type VARCHAR(50) NOT NULL DEFAULT 'New',
+        certificate_no VARCHAR(255) NOT NULL,
+        previous_certificate_no VARCHAR(255) NULL,
+        test_date VARCHAR(100) NULL,
+        generated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_cert_log_lookup (emp_id, standard, generated_at)
+      )`
+    );
+    console.log('✅ Certificate generation log table ready');
+  } catch (err) {
+    console.warn('⚠️ Could not ensure certificate_generation_log table:', err.message);
+  }
+}
+
+async function ensureResultAttachmentColumns() {
+  const dbName = process.env.DB_NAME || 'ptis_testing';
+  const columns = [
+    { name: 'PRACTICAL_ATTACHMENT_PATH', sql: 'VARCHAR(1024) NULL' },
+    { name: 'PRACTICAL_ATTACHMENT_NAME', sql: 'VARCHAR(255) NULL' },
+    { name: 'PRACTICAL_ATTACHMENT_MIME', sql: 'VARCHAR(100) NULL' }
+  ];
+
+  try {
+    const placeholders = columns.map(() => '?').join(',');
+    const params = [dbName, ...columns.map((c) => c.name)];
+    const [rows] = await pool.query(
+      `SELECT COLUMN_NAME
+       FROM INFORMATION_SCHEMA.COLUMNS
+       WHERE TABLE_SCHEMA = ?
+         AND TABLE_NAME = 'result'
+         AND COLUMN_NAME IN (${placeholders})`,
+      params
+    );
+    const existing = new Set(rows.map((r) => r.COLUMN_NAME));
+    const alterParts = columns
+      .filter((c) => !existing.has(c.name))
+      .map((c) => `ADD COLUMN ${c.name} ${c.sql}`);
+
+    if (alterParts.length) {
+      await pool.query(`ALTER TABLE result ${alterParts.join(', ')}`);
+      console.log('✅ Result attachment columns ready');
+    }
+  } catch (err) {
+    console.warn('⚠️ Could not ensure result attachment columns:', err.message);
+  }
+}
+
 db.connect((err) => {
   if (err) {
     console.error('Error Connecting to MySQL:', err);
@@ -56,6 +236,9 @@ db.on('error', (err) => {
     db.connect();
   }
 });
+
+ensureCertificateHistoryTable();
+ensureResultAttachmentColumns();
 
 /* ---------------------- Request logger -------------------------- */
 app.use((req, res, next) => {
@@ -74,19 +257,44 @@ app.get('/', (req, res) => {
 /* ------------------- Certificate Templates List ----------------- */
 app.get('/api/certificate-templates', (req, res) => {
   try {
-    const templatesDir = path.join(__dirname, '../certificates/templates');
-    const files = fs.readdirSync(templatesDir);
+    const files = fs.readdirSync(CERTIFICATE_TEMPLATES_DIR);
     
     // Get PDF template names without extension
     const templates = files
       .filter(file => file.endsWith('.pdf'))
-      .map(file => file.replace('.pdf', ''))
+      .map(file => path.parse(file).name)
       .sort();
     
     res.json(templates);
   } catch (error) {
     console.error('Error reading templates:', error);
     res.status(500).json({ error: 'Failed to fetch templates', details: error.message });
+  }
+});
+
+app.post('/api/certificate-templates', templateUpload.single('template'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'Template file is required' });
+    }
+
+    const templateBase = path.parse(req.file.filename).name;
+    const standard = String(req.body?.standard || '').trim();
+
+    if (standard) {
+      const [result] = await pool.query(
+        'UPDATE standard SET Certificate_Template = ? WHERE Standard_List = ?',
+        [templateBase, standard]
+      );
+      if (result.affectedRows === 0) {
+        return res.status(404).json({ error: 'Standard Not Found', template: templateBase });
+      }
+    }
+
+    res.json({ ok: true, template: templateBase, filename: req.file.filename, standard: standard || null });
+  } catch (error) {
+    console.error('Template upload error:', error);
+    res.status(500).json({ error: 'Failed to upload template', details: error.message });
   }
 });
 
@@ -105,33 +313,72 @@ app.get('/api/employees', async (req, res) => {
 
 app.post('/api/employees', async (req, res) => {
   const { ID, Name } = req.body || {};
-  if (!ID || !Name) return res.status(400).json({ error: 'ID and Name are Required' });
+  const employeeId = String(ID ?? '').trim();
+  const employeeName = String(Name ?? '').trim();
+  if (!employeeId || !employeeName) return res.status(400).json({ error: 'ID and Name are Required' });
 
+  let conn;
   try {
-    await pool.query(
+    conn = await pool.getConnection();
+    await conn.beginTransaction();
+
+    await conn.query(
       `INSERT INTO employees (ID, Name) VALUES (?, ?)
        ON DUPLICATE KEY UPDATE Name = VALUES(Name)`,
-      [ID, Name]
+      [employeeId, employeeName]
     );
-    res.json({ ok: true, ID, Name });
+
+    const [syncResult] = await conn.query(
+      'UPDATE result SET NAME = ? WHERE ID = ?',
+      [employeeName, employeeId]
+    );
+
+    await conn.commit();
+    res.json({ ok: true, ID: employeeId, Name: employeeName, syncedResults: syncResult.affectedRows });
   } catch (e) {
+    if (conn) {
+      try { await conn.rollback(); } catch (_) {}
+    }
     console.error('Employees Upsert Error:', e);
     res.status(500).json({ error: e.message });
+  } finally {
+    if (conn) conn.release();
   }
 });
 
 app.put('/api/employees/:id', async (req, res) => {
   const { id } = req.params;
   const { Name } = req.body || {};
-  if (!Name) return res.status(400).json({ error: 'Name is Required' });
+  const employeeId = String(id ?? '').trim();
+  const employeeName = String(Name ?? '').trim();
+  if (!employeeName) return res.status(400).json({ error: 'Name is Required' });
 
+  let conn;
   try {
-    const [r] = await pool.query('UPDATE employees SET Name=? WHERE ID=?', [Name, id]);
-    if (r.affectedRows === 0) return res.status(404).json({ error: 'Employee Not Found' });
-    res.json({ ok: true, ID: id, Name });
+    conn = await pool.getConnection();
+    await conn.beginTransaction();
+
+    const [r] = await conn.query('UPDATE employees SET Name=? WHERE ID=?', [employeeName, employeeId]);
+    if (r.affectedRows === 0) {
+      await conn.rollback();
+      return res.status(404).json({ error: 'Employee Not Found' });
+    }
+
+    const [syncResult] = await conn.query(
+      'UPDATE result SET NAME = ? WHERE ID = ?',
+      [employeeName, employeeId]
+    );
+
+    await conn.commit();
+    res.json({ ok: true, ID: employeeId, Name: employeeName, syncedResults: syncResult.affectedRows });
   } catch (e) {
+    if (conn) {
+      try { await conn.rollback(); } catch (_) {}
+    }
     console.error('Employees Update Error:', e);
     res.status(500).json({ error: e.message });
+  } finally {
+    if (conn) conn.release();
   }
 });
 
@@ -159,6 +406,53 @@ app.get('/api/standards', (req, res) => {
 });
 
 /* ---------------------------- Questions ------------------------- */
+const normalizeQuestionKey = (text) => String(text || '').trim().toLowerCase();
+
+// Questions count endpoint – returns DB total and per-standard breakdown
+app.get('/api/questions/count', (req, res) => {
+  db.query('DESCRIBE questions', (err, columns) => {
+    if (err) return res.status(500).json({ error: 'Database Error', details: err.message });
+
+    const possibleStandardColumns = ['Standard', 'Standard_List', 'Category'];
+    const columnNames = columns.map(col => col.Field);
+    const standardColumn = possibleStandardColumns.find(col => columnNames.includes(col)) || 'Standard';
+
+    const totalQ = 'SELECT COUNT(*) AS total FROM questions';
+    db.query(totalQ, [], (e1, r1) => {
+      if (e1) return res.status(500).json({ error: 'Database Error', details: e1.message });
+      const total = r1[0].total;
+
+      // Per-standard counts (trimmed)
+      const breakdownQ = `
+        SELECT TRIM(${standardColumn}) AS std, COUNT(*) AS cnt
+        FROM questions
+        GROUP BY TRIM(${standardColumn})
+        ORDER BY cnt DESC
+      `;
+      db.query(breakdownQ, [], (e2, r2) => {
+        if (e2) return res.status(500).json({ error: 'Database Error', details: e2.message });
+
+        // Count questions whose standard doesn't match any row in the standard table
+        const unmatchedQ = `
+          SELECT COUNT(*) AS unmatched
+          FROM questions
+          WHERE TRIM(${standardColumn}) NOT IN (
+            SELECT TRIM(Standard_List) FROM standard
+          ) OR ${standardColumn} IS NULL OR TRIM(${standardColumn}) = ''
+        `;
+        db.query(unmatchedQ, [], (e3, r3) => {
+          if (e3) return res.status(500).json({ error: 'Database Error', details: e3.message });
+          res.json({
+            total,
+            unmatched: r3[0].unmatched,
+            breakdown: r2
+          });
+        });
+      });
+    });
+  });
+});
+
 app.get('/api/questions', (req, res) => {
   const { standard } = req.query;
 
@@ -173,7 +467,7 @@ app.get('/api/questions', (req, res) => {
     const standardColumn = possibleStandardColumns.find(col => columnNames.includes(col)) || 'Standard';
 
     if (standard === 'Cumulative') {
-      const q = `SELECT ${idColumn} AS NO, Question, Opt_A, Opt_B, Opt_C, Opt_D, Answer, ${standardColumn} AS Standard
+      const q = `SELECT ${idColumn} AS NO, Question, Opt_A, Opt_B, Opt_C, Opt_D, Answer, TRIM(${standardColumn}) AS Standard, TRIM(${standardColumn}) AS Standard_List
                  FROM questions ORDER BY RAND()`;
       return db.query(q, [], (qErr, rows) => {
         if (qErr) return res.status(500).json({ error: 'Database Error', details: qErr.message });
@@ -182,20 +476,20 @@ app.get('/api/questions', (req, res) => {
     }
 
     if (standard) {
-      const exact = `SELECT ${idColumn} AS NO, Question, Opt_A, Opt_B, Opt_C, Opt_D, Answer, ${standardColumn} AS Standard
-                     FROM questions WHERE ${standardColumn} = ? ORDER BY ${idColumn}`;
-      return db.query(exact, [standard], (e1, r1) => {
+      const exact = `SELECT ${idColumn} AS NO, Question, Opt_A, Opt_B, Opt_C, Opt_D, Answer, TRIM(${standardColumn}) AS Standard, TRIM(${standardColumn}) AS Standard_List
+                     FROM questions WHERE TRIM(${standardColumn}) = ? ORDER BY ${idColumn}`;
+      return db.query(exact, [standard.trim()], (e1, r1) => {
         if (!e1 && r1.length) return res.json(r1);
-        const like = `SELECT ${idColumn} AS NO, Question, Opt_A, Opt_B, Opt_C, Opt_D, Answer, ${standardColumn} AS Standard
-                      FROM questions WHERE ${standardColumn} LIKE ? ORDER BY ${idColumn}`;
-        db.query(like, [`%${standard}%`], (e2, r2) => {
+        const like = `SELECT ${idColumn} AS NO, Question, Opt_A, Opt_B, Opt_C, Opt_D, Answer, TRIM(${standardColumn}) AS Standard, TRIM(${standardColumn}) AS Standard_List
+                      FROM questions WHERE TRIM(${standardColumn}) LIKE ? ORDER BY ${idColumn}`;
+        db.query(like, [`%${standard.trim()}%`], (e2, r2) => {
           if (e2) return res.status(500).json({ error: 'Database Error', details: e2.message });
           res.json(r2);
         });
       });
     }
 
-    const all = `SELECT ${idColumn} AS NO, Question, Opt_A, Opt_B, Opt_C, Opt_D, Answer, ${standardColumn} AS Standard
+    const all = `SELECT ${idColumn} AS NO, Question, Opt_A, Opt_B, Opt_C, Opt_D, Answer, TRIM(${standardColumn}) AS Standard, TRIM(${standardColumn}) AS Standard_List
                  FROM questions ORDER BY ${idColumn}`;
     db.query(all, [], (e3, r3) => {
       if (e3) return res.status(500).json({ error: 'Database Error', details: e3.message });
@@ -212,6 +506,17 @@ app.post('/api/questions', async (req, res) => {
   }
 
   try {
+    const questionKey = normalizeQuestionKey(Question);
+    const [dupRows] = await pool.query(
+      `SELECT 1 FROM questions
+       WHERE LOWER(TRIM(Question)) = ?
+       LIMIT 1`,
+      [questionKey]
+    );
+    if (dupRows.length > 0) {
+      return res.status(409).json({ error: 'Duplicate question already exists' });
+    }
+
     const [result] = await pool.query(
       `INSERT INTO questions (Question, Opt_A, Opt_B, Opt_C, Opt_D, Answer, Standard_List) 
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
@@ -240,6 +545,7 @@ app.post('/api/questions/bulk', async (req, res) => {
   let successCount = 0;
   let failedCount = 0;
   const errors = [];
+  const seenKeys = new Set();
 
   console.log(`🔄 Processing ${questions.length} questions...`);
 
@@ -270,7 +576,37 @@ app.post('/api/questions/bulk', async (req, res) => {
       continue;
     }
 
+    const questionKey = normalizeQuestionKey(q.Question);
+    const dedupeKey = questionKey;
+
+    if (seenKeys.has(dedupeKey)) {
+      failedCount++;
+      errors.push({
+        row: rowNum,
+        error: 'Duplicate question in upload file',
+        question: q.Question
+      });
+      continue;
+    }
+    seenKeys.add(dedupeKey);
+
     try {
+      const [dupRows] = await pool.query(
+        `SELECT 1 FROM questions
+         WHERE LOWER(TRIM(Question)) = ?
+         LIMIT 1`,
+        [questionKey]
+      );
+      if (dupRows.length > 0) {
+        failedCount++;
+        errors.push({
+          row: rowNum,
+          error: 'Duplicate question already exists',
+          question: q.Question
+        });
+        continue;
+      }
+
       await pool.query(
         `INSERT INTO questions (Question, Opt_A, Opt_B, Opt_C, Opt_D, Answer, Standard_List) 
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
@@ -318,6 +654,30 @@ app.put('/api/questions/:no', async (req, res) => {
     res.json({ ok: true, NO: no });
   } catch (e) {
     console.error('Questions Update Error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Bulk Delete Questions
+app.delete('/api/questions/bulk', async (req, res) => {
+  const { nos } = req.body || {};
+  if (!Array.isArray(nos) || nos.length === 0) {
+    return res.status(400).json({ error: 'Provide a non-empty array of question IDs in body.nos' });
+  }
+  // Validate all values are numeric to prevent injection
+  const numericNos = nos.map(n => parseInt(n, 10)).filter(n => !isNaN(n));
+  if (numericNos.length === 0) {
+    return res.status(400).json({ error: 'No valid numeric IDs provided' });
+  }
+  try {
+    const placeholders = numericNos.map(() => '?').join(',');
+    const [result] = await pool.query(
+      `DELETE FROM questions WHERE NO IN (${placeholders})`,
+      numericNos
+    );
+    res.json({ ok: true, deleted: result.affectedRows });
+  } catch (e) {
+    console.error('Questions Bulk Delete Error:', e);
     res.status(500).json({ error: e.message });
   }
 });
@@ -451,21 +811,75 @@ app.post('/api/standards', async (req, res) => {
 app.put('/api/standards/:standard', async (req, res) => {
   const { standard } = req.params;
   const { Standard_List, Short_Name, Negative_Marking, Certificate_Template } = req.body || {};
-  
+  const newStandard = Standard_List || standard;
+
+  let conn;
   try {
-    const [result] = await pool.query(
+    conn = await pool.getConnection();
+    await conn.beginTransaction();
+
+    if (newStandard !== standard) {
+      const [dupRows] = await conn.query(
+        'SELECT 1 FROM standard WHERE Standard_List = ? LIMIT 1',
+        [newStandard]
+      );
+      if (dupRows.length > 0) {
+        await conn.rollback();
+        return res.status(409).json({ error: 'Standard already exists' });
+      }
+    }
+
+    const [result] = await conn.query(
       'UPDATE standard SET Standard_List = ?, Short_Name = ?, Negative_Marking = ?, Certificate_Template = ? WHERE Standard_List = ?',
-      [Standard_List || standard, Short_Name || '', Negative_Marking || 'Yes', Certificate_Template || '', standard]
+      [newStandard, Short_Name || '', Negative_Marking || 'Yes', Certificate_Template || '', standard]
     );
-    
+
     if (result.affectedRows === 0) {
+      await conn.rollback();
       return res.status(404).json({ error: 'Standard Not Found' });
     }
-    
-    res.json({ ok: true, Standard_List: Standard_List || standard });
+
+    if (newStandard !== standard) {
+      await conn.query(
+        'UPDATE info SET Standard_List = ? WHERE Standard_List = ?',
+        [newStandard, standard]
+      );
+
+      const [columns] = await conn.query('SHOW COLUMNS FROM questions');
+      const columnNames = columns.map(col => col.Field);
+      const possibleStandardColumns = ['Standard_List', 'Standard', 'Category'];
+      const standardColumn = possibleStandardColumns.find(col => columnNames.includes(col)) || 'Standard_List';
+
+      await conn.query(
+        `UPDATE questions SET ${standardColumn} = ? WHERE ${standardColumn} = ?`,
+        [newStandard, standard]
+      );
+
+      await conn.query(
+        'UPDATE result SET STANDARD = ? WHERE STANDARD = ?',
+        [newStandard, standard]
+      );
+
+      try {
+        await conn.query(
+          'UPDATE certificate_generation_log SET standard = ? WHERE standard = ?',
+          [newStandard, standard]
+        );
+      } catch (logErr) {
+        console.warn('Certificate log update skipped:', logErr.message);
+      }
+    }
+
+    await conn.commit();
+    res.json({ ok: true, Standard_List: newStandard });
   } catch (e) {
+    if (conn) {
+      try { await conn.rollback(); } catch (_) {}
+    }
     console.error('Standards Update Error:', e);
     res.status(500).json({ error: e.message });
+  } finally {
+    if (conn) conn.release();
   }
 });
 
@@ -560,7 +974,12 @@ app.delete('/api/info/:standard', async (req, res) => {
 /* ----------------------------- Results -------------------------- */
 app.get('/api/results', (req, res) => {
   db.query(
-    'SELECT ID, NAME, TOTAL_QUESTION, CORRECT_ANSWER, WRONG_ANSWER, PERCENTAGE, PASSING_CRITERIA, STATUS, STANDARD, DATE FROM result ORDER BY DATE DESC, ID',
+    `SELECT ID, NAME, TOTAL_QUESTION, CORRECT_ANSWER, WRONG_ANSWER, PERCENTAGE, PASSING_CRITERIA, STATUS, STANDARD, DATE,
+            CASE WHEN QUESTIONS IS NOT NULL AND QUESTIONS <> '' AND QUESTIONS <> '[]' THEN 1 ELSE 0 END AS HAS_ANSWER_SHEET,
+            PRACTICAL_ATTACHMENT_NAME,
+            CASE WHEN PRACTICAL_ATTACHMENT_PATH IS NOT NULL AND PRACTICAL_ATTACHMENT_PATH <> '' THEN 1 ELSE 0 END AS HAS_PRACTICAL_ATTACHMENT
+    FROM result
+    ORDER BY DATE ASC, ID`,
     (err, results) => {
       if (err) return res.status(500).json({ error: 'Database Error', details: err.message });
       res.json(results);
@@ -572,7 +991,10 @@ app.post('/api/results', async (req, res) => {
   const {
     ID, NAME, TOTAL_QUESTION, CORRECT_ANSWER, WRONG_ANSWER,
     PERCENTAGE, PASSING_CRITERIA, STATUS, STANDARD, DATE, answers, questions,
-    CERTIFICATION_TYPE
+    CERTIFICATION_TYPE,
+    ORIGINAL_DATE,
+    original_date,
+    originalDate
   } = req.body;
 
   // Debug logging
@@ -603,43 +1025,81 @@ app.post('/api/results', async (req, res) => {
       ? null
       : (String(PASSING_CRITERIA).includes('%') ? String(PASSING_CRITERIA) : `${Number(PASSING_CRITERIA).toFixed(0)}%`);
 
+  const dateValue = String(DATE || '').trim();
+  const originalDateValue = String(ORIGINAL_DATE ?? original_date ?? originalDate ?? '').trim();
+  const lookupDate = originalDateValue || dateValue;
+
   // Store answers and questions as JSON
   const answersJSON = answers ? JSON.stringify(answers) : null;
   const questionsJSON = questions ? JSON.stringify(questions) : null;
 
   db.query(
     'SELECT ID FROM result WHERE ID = ? AND STANDARD = ? AND DATE = ?',
-    [ID, STANDARD, DATE],
+    [ID, STANDARD, lookupDate],
     (checkErr, checkResults) => {
       if (checkErr) return res.status(500).json({ error: 'Database Error Checking For Duplicates', details: checkErr.message });
 
       if (checkResults.length > 0) {
-        const sql = `UPDATE result
-                     SET NAME=?, TOTAL_QUESTION=?, CORRECT_ANSWER=?, WRONG_ANSWER=?, PERCENTAGE=?, PASSING_CRITERIA=?, STATUS=?, ANSWERS=?, QUESTIONS=?
-                     WHERE ID=? AND STANDARD=? AND DATE=?`;
-        const params = [NAME, TOTAL_QUESTION, CORRECT_ANSWER, WRONG_ANSWER, pct, passStr, STATUS, answersJSON, questionsJSON, ID, STANDARD, DATE];
-        return db.query(sql, params, (updateErr) => {
-          if (updateErr) return res.status(500).json({ error: 'Database Error Updating Result', details: updateErr.message });
-          db.query(
-            'SELECT ID, NAME, TOTAL_QUESTION, CORRECT_ANSWER, WRONG_ANSWER, PERCENTAGE, PASSING_CRITERIA, STATUS, STANDARD, DATE FROM result WHERE ID=? AND STANDARD=? AND DATE=?',
-            [ID, STANDARD, DATE],
-            (fetchErr, fetchResults) => {
-              if (fetchErr) return res.status(500).json({ error: 'Database Error Fetching Updated Result', details: fetchErr.message });
-              res.json({ success: true, message: 'Test Result Updated Successfully', data: fetchResults[0] });
+        const doUpdate = () => {
+          const sql = `UPDATE result
+                       SET NAME=?, TOTAL_QUESTION=?, CORRECT_ANSWER=?, WRONG_ANSWER=?, PERCENTAGE=?, PASSING_CRITERIA=?, STATUS=?, ANSWERS=?, QUESTIONS=?, DATE=?
+                       WHERE ID=? AND STANDARD=? AND DATE=?`;
+          const params = [
+            NAME,
+            TOTAL_QUESTION,
+            CORRECT_ANSWER,
+            WRONG_ANSWER,
+            pct,
+            passStr,
+            STATUS,
+            answersJSON,
+            questionsJSON,
+            dateValue,
+            ID,
+            STANDARD,
+            lookupDate
+          ];
+          return db.query(sql, params, (updateErr) => {
+            if (updateErr) return res.status(500).json({ error: 'Database Error Updating Result', details: updateErr.message });
+            db.query(
+              'SELECT ID, NAME, TOTAL_QUESTION, CORRECT_ANSWER, WRONG_ANSWER, PERCENTAGE, PASSING_CRITERIA, STATUS, STANDARD, DATE FROM result WHERE ID=? AND STANDARD=? AND DATE=?',
+              [ID, STANDARD, dateValue],
+              (fetchErr, fetchResults) => {
+                if (fetchErr) return res.status(500).json({ error: 'Database Error Fetching Updated Result', details: fetchErr.message });
+                res.json({ success: true, message: 'Test Result Updated Successfully', data: fetchResults[0] });
+              }
+            );
+          });
+        };
+
+        if (originalDateValue && originalDateValue !== dateValue) {
+          return db.query(
+            'SELECT ID FROM result WHERE ID = ? AND STANDARD = ? AND DATE = ?',
+            [ID, STANDARD, dateValue],
+            (conflictErr, conflictResults) => {
+              if (conflictErr) {
+                return res.status(500).json({ error: 'Database Error Checking Date Conflict', details: conflictErr.message });
+              }
+              if (conflictResults.length > 0) {
+                return res.status(409).json({ error: 'Result already exists for this date' });
+              }
+              return doUpdate();
             }
           );
-        });
+        }
+
+        return doUpdate();
       }
 
       const ins = `INSERT INTO result
         (ID, NAME, TOTAL_QUESTION, CORRECT_ANSWER, WRONG_ANSWER, PERCENTAGE, PASSING_CRITERIA, STATUS, STANDARD, DATE, ANSWERS, QUESTIONS)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
-      const params = [ID, NAME, TOTAL_QUESTION, CORRECT_ANSWER, WRONG_ANSWER, pct, passStr, STATUS, STANDARD, DATE, answersJSON, questionsJSON];
+      const params = [ID, NAME, TOTAL_QUESTION, CORRECT_ANSWER, WRONG_ANSWER, pct, passStr, STATUS, STANDARD, dateValue, answersJSON, questionsJSON];
       db.query(ins, params, (err, r) => {
         if (err) return res.status(500).json({ error: 'Database Error', details: err.message });
         db.query(
           'SELECT ID, NAME, TOTAL_QUESTION, CORRECT_ANSWER, WRONG_ANSWER, PERCENTAGE, PASSING_CRITERIA, STATUS, STANDARD, DATE FROM result WHERE ID=? AND STANDARD=? AND DATE=?',
-          [ID, STANDARD, DATE],
+          [ID, STANDARD, dateValue],
           (fetchErr, fetchResults) => {
             if (fetchErr) return res.status(500).json({ error: 'Database Error Fetching Saved Result', details: fetchErr.message });
             res.json({ success: true, id: r.insertId, message: 'Test Result Saved Successfully', data: fetchResults[0] });
@@ -654,19 +1114,139 @@ app.post('/api/results', async (req, res) => {
 app.delete('/api/results/:id/:standard/:date', async (req, res) => {
   const { id, standard, date } = req.params;
   try {
+    const [rows] = await pool.query(
+      'SELECT PRACTICAL_ATTACHMENT_PATH FROM result WHERE ID = ? AND STANDARD = ? AND DATE = ?',
+      [id, standard, date]
+    );
+
+    if (!rows.length) {
+      return res.status(404).json({ error: 'Result Not Found' });
+    }
+
+    const attachmentPaths = Array.from(
+      new Set(rows.map((row) => row.PRACTICAL_ATTACHMENT_PATH).filter(Boolean))
+    );
     const [result] = await pool.query(
       'DELETE FROM result WHERE ID = ? AND STANDARD = ? AND DATE = ?',
       [id, standard, date]
     );
-    
+
     if (result.affectedRows === 0) {
       return res.status(404).json({ error: 'Result Not Found' });
     }
-    
-    res.json({ ok: true, message: 'Result Deleted Successfully' });
+
+    for (const attachmentPath of attachmentPaths) {
+      await deleteAttachmentFile(attachmentPath);
+    }
+
+    res.json({ ok: true, message: 'Result Deleted Successfully', deleted: result.affectedRows });
   } catch (e) {
     console.error('Result Delete Error:', e);
     res.status(500).json({ error: e.message });
+  }
+});
+
+/* -------------------- Practical Attachments -------------------- */
+app.post('/api/results/:id/:standard/:date/attachment', attachmentUpload.single('attachment'), async (req, res) => {
+  const { id, standard, date } = req.params;
+
+  if (!req.file) {
+    return res.status(400).json({ error: 'Attachment file is required' });
+  }
+
+  const relativePath = path.join('practical-attachments', req.file.filename);
+
+  try {
+    const [rows] = await pool.query(
+      'SELECT PRACTICAL_ATTACHMENT_PATH FROM result WHERE ID = ? AND STANDARD = ? AND DATE = ? LIMIT 1',
+      [id, standard, date]
+    );
+
+    if (!rows.length) {
+      await deleteAttachmentFile(relativePath);
+      return res.status(404).json({ error: 'Result Not Found' });
+    }
+
+    const previousPath = rows[0].PRACTICAL_ATTACHMENT_PATH;
+
+    await pool.query(
+      `UPDATE result
+       SET PRACTICAL_ATTACHMENT_PATH = ?, PRACTICAL_ATTACHMENT_NAME = ?, PRACTICAL_ATTACHMENT_MIME = ?
+       WHERE ID = ? AND STANDARD = ? AND DATE = ?`,
+      [relativePath, req.file.originalname, req.file.mimetype, id, standard, date]
+    );
+
+    if (previousPath && previousPath !== relativePath) {
+      await deleteAttachmentFile(previousPath);
+    }
+
+    res.json({ ok: true, filename: req.file.originalname });
+  } catch (err) {
+    console.error('Attachment Upload Error:', err);
+    await deleteAttachmentFile(relativePath);
+    res.status(500).json({ error: 'Failed to upload attachment', details: err.message });
+  }
+});
+
+app.get('/api/results/:id/:standard/:date/attachment', async (req, res) => {
+  const { id, standard, date } = req.params;
+  try {
+    const [rows] = await pool.query(
+      'SELECT PRACTICAL_ATTACHMENT_PATH, PRACTICAL_ATTACHMENT_NAME FROM result WHERE ID = ? AND STANDARD = ? AND DATE = ? LIMIT 1',
+      [id, standard, date]
+    );
+
+    if (!rows.length || !rows[0].PRACTICAL_ATTACHMENT_PATH) {
+      return res.status(404).json({ error: 'Attachment Not Found' });
+    }
+
+    const absolutePath = resolveAttachmentPath(rows[0].PRACTICAL_ATTACHMENT_PATH);
+    if (!absolutePath || !fs.existsSync(absolutePath)) {
+      return res.status(404).json({ error: 'Attachment File Missing' });
+    }
+
+    const downloadName = rows[0].PRACTICAL_ATTACHMENT_NAME || path.basename(absolutePath);
+    res.download(absolutePath, downloadName, (err) => {
+      if (err) {
+        console.error('Attachment Download Error:', err);
+        if (!res.headersSent) {
+          res.status(500).json({ error: 'Failed to download attachment' });
+        }
+      }
+    });
+  } catch (err) {
+    console.error('Attachment Fetch Error:', err);
+    res.status(500).json({ error: 'Failed to fetch attachment', details: err.message });
+  }
+});
+
+app.delete('/api/results/:id/:standard/:date/attachment', async (req, res) => {
+  const { id, standard, date } = req.params;
+  try {
+    const [rows] = await pool.query(
+      'SELECT PRACTICAL_ATTACHMENT_PATH FROM result WHERE ID = ? AND STANDARD = ? AND DATE = ? LIMIT 1',
+      [id, standard, date]
+    );
+
+    if (!rows.length || !rows[0].PRACTICAL_ATTACHMENT_PATH) {
+      return res.status(404).json({ error: 'Attachment Not Found' });
+    }
+
+    const attachmentPath = rows[0].PRACTICAL_ATTACHMENT_PATH;
+    await pool.query(
+      `UPDATE result
+       SET PRACTICAL_ATTACHMENT_PATH = NULL,
+           PRACTICAL_ATTACHMENT_NAME = NULL,
+           PRACTICAL_ATTACHMENT_MIME = NULL
+       WHERE ID = ? AND STANDARD = ? AND DATE = ?`,
+      [id, standard, date]
+    );
+
+    await deleteAttachmentFile(attachmentPath);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('Attachment Remove Error:', err);
+    res.status(500).json({ error: 'Failed to remove attachment', details: err.message });
   }
 });
 
@@ -888,6 +1468,33 @@ app.get('/api/debug/standards', (req, res) => {
 /* -------------------------- Certificate Generation -------------- */
 const { generateCertificate } = require('./certificateGenerator');
 
+app.get('/api/certificates/previous-number', async (req, res) => {
+  const empId = String(req.query.emp_id || '').trim();
+  const standard = String(req.query.standard || '').trim();
+
+  if (!empId || !standard) {
+    return res.status(400).json({ error: 'emp_id and standard are required' });
+  }
+
+  try {
+    const [rows] = await pool.query(
+      `SELECT certificate_no
+       FROM certificate_generation_log
+       WHERE emp_id = ? AND standard = ?
+       ORDER BY generated_at DESC, id DESC
+       LIMIT 1`,
+      [empId, standard]
+    );
+
+    res.json({
+      previous_certificate_no: rows.length > 0 ? rows[0].certificate_no : ''
+    });
+  } catch (error) {
+    console.error('Previous certificate lookup error:', error);
+    res.status(500).json({ error: 'Failed to fetch previous certificate number', details: error.message });
+  }
+});
+
 app.post('/api/certificates/generate', async (req, res) => {
   const { 
     emp_id, 
@@ -901,24 +1508,47 @@ app.post('/api/certificates/generate', async (req, res) => {
     general_data,
     specific_data,
     practical_data,
-    certification_type
+    certification_type,
+    previous_certificate_no
   } = req.body;
   
   if (!emp_id || !emp_name || !test_date || !standard) {
     return res.status(400).json({ error: 'Missing required fields' });
   }
 
+  const normalizedStandard = String(standard || '').trim();
+  const resolvedCertificationType = certification_type || 'New';
+
+  const isRecertification = resolvedCertificationType === 'Recertification';
+  const trimmedPreviousCertificateNo = String(previous_certificate_no || '').trim();
+  if (isRecertification && !trimmedPreviousCertificateNo) {
+    return res.status(400).json({ error: 'Previous Certificate No. is required for recertification' });
+  }
+
   try {
     // Fetch Certificate_Template from database for the standard
     let certificate_template = null;
     try {
-      const [rows] = await pool.query(
-        'SELECT Certificate_Template FROM standard WHERE Standard_List = ?',
-        [standard]
-      );
-      if (rows && rows.length > 0 && rows[0].Certificate_Template) {
-        certificate_template = rows[0].Certificate_Template;
-        console.log(`Using custom template for ${standard}: ${certificate_template}`);
+      const candidates = new Set();
+      if (is_combined && general_data?.standard) {
+        candidates.add(String(general_data.standard).trim());
+      }
+      if (is_combined && specific_data?.standard) {
+        candidates.add(String(specific_data.standard).trim());
+      }
+      candidates.add(normalizedStandard);
+
+      for (const candidate of candidates) {
+        if (!candidate) continue;
+        const [rows] = await pool.query(
+          'SELECT Certificate_Template FROM standard WHERE Standard_List = ?',
+          [candidate]
+        );
+        if (rows && rows.length > 0 && rows[0].Certificate_Template) {
+          certificate_template = String(rows[0].Certificate_Template).trim();
+          console.log(`Using custom template for ${candidate}: ${certificate_template}`);
+          break;
+        }
       }
     } catch (dbErr) {
       console.warn('Failed to fetch certificate template from DB:', dbErr);
@@ -929,8 +1559,9 @@ app.post('/api/certificates/generate', async (req, res) => {
       emp_name,
       test_date,
       status: status || 'PASSED',
-      standard,
-      certification_type: certification_type || 'New',
+      standard: normalizedStandard,
+      certification_type: resolvedCertificationType,
+      previous_certificate_no: isRecertification ? trimmedPreviousCertificateNo : null,
       certificate_template // Pass the template override
     };
     
@@ -966,6 +1597,24 @@ app.post('/api/certificates/generate', async (req, res) => {
     const result = await generateCertificate(certOptions);
     
     if (result.success) {
+      try {
+        await pool.query(
+          `INSERT INTO certificate_generation_log
+          (emp_id, standard, certification_type, certificate_no, previous_certificate_no, test_date)
+          VALUES (?, ?, ?, ?, ?, ?)`,
+          [
+            String(emp_id).trim(),
+            normalizedStandard,
+            resolvedCertificationType,
+            String(result.certificateNumber || '').trim(),
+            isRecertification ? trimmedPreviousCertificateNo : null,
+            String(test_date || '').trim() || null
+          ]
+        );
+      } catch (logError) {
+        console.warn('Certificate generation log insert failed:', logError.message);
+      }
+
       // Send the PDF file for download
       res.download(result.path, result.filename, (err) => {
         if (err) {
@@ -995,6 +1644,15 @@ app.get('/api/health', (req, res) => {
 
 /* -------------------------- Error handlers ---------------------- */
 app.use((err, req, res, next) => {
+  if (err && (err instanceof multer.MulterError || err.code === 'LIMIT_FILE_SIZE')) {
+    return res.status(400).json({ error: err.message || 'Invalid attachment upload' });
+  }
+  if (err && typeof err.message === 'string' && /attachment/i.test(err.message)) {
+    return res.status(400).json({ error: err.message });
+  }
+  if (err && typeof err.message === 'string' && /template/i.test(err.message)) {
+    return res.status(400).json({ error: err.message });
+  }
   console.error('Unhandled Error:', err);
   res.status(500).json({ error: 'Internal Server Error', message: err.message });
 });

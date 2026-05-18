@@ -35,7 +35,7 @@ app.use(cors({
 ```
 
 ### 1.3 Create Environment Variables File
-Copy `.env.example` to `.env` and fill in your values.
+Copy `backend/ptis-api/.env.example` to `backend/ptis-api/.env` and fill in your values.
 
 ---
 
@@ -94,6 +94,8 @@ git push -u origin main
    - `DB_NAME` = `ptis_testing`
    - `PORT` = `3001`
    - `NODE_ENV` = `production`
+   - `PTIS_CAMBRIA_HEADINGS_FONT_PATH` = `C:/Windows/Fonts/cambriab.ttf` (Windows)
+   - `PTIS_CAMBRIA_FONT_PATH` = `C:/Windows/Fonts/cambria.ttf` (Windows)
 
 7. Click "Create Web Service"
 8. Wait for deployment (5-10 minutes)

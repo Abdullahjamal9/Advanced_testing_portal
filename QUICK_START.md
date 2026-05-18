@@ -31,7 +31,10 @@ git push -u origin main
 4. Build: `npm install`
 5. Start: `node server.js`
 6. Add environment variables from Railway
-7. Deploy and copy URL
+7. If you need Cambria on Windows, add:
+   - `PTIS_CAMBRIA_HEADINGS_FONT_PATH` = `C:/Windows/Fonts/cambriab.ttf`
+   - `PTIS_CAMBRIA_FONT_PATH` = `C:/Windows/Fonts/cambria.ttf`
+8. Deploy and copy URL
 
 ### Step 3: Frontend (Vercel)
 1. Sign up at https://vercel.com
