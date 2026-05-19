@@ -220,19 +220,19 @@ const QuestionsAdminPage = ({ onBack, showToast }) => {
     if (!window.confirm(`Are you sure you want to delete ${selectedNos.size} selected question(s)? This cannot be undone.`)) return;
     setBulkDeleting(true);
     try {
-      const response = await fetch(`${API_BASE_URL}/api/questions/bulk`, {
-        method: 'DELETE',
+      const response = await fetch(`${API_BASE_URL}/api/questions/bulk-delete`, {
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ nos: Array.from(selectedNos) })
       });
-      const data = await response.json();
+      const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.error || 'Bulk delete failed');
-      if (showToast) showToast(`${data.deleted} question(s) deleted successfully!`, 'success');
+      if (showToast) showToast(`${data.deleted} Questions Deleted Successfully!`, 'success');
       setSelectedNos(new Set());
       fetchData();
     } catch (error) {
       console.error('Bulk delete error:', error);
-      if (showToast) showToast('Failed to delete selected questions', 'error');
+      if (showToast) showToast(`Failed to delete selected questions: ${error.message}`, 'error');
     } finally {
       setBulkDeleting(false);
     }

@@ -1056,26 +1056,140 @@ const TestingModule = () => {
     return () => clearInterval(intervalId);
   }, [isAdmin, currentPage, adminActiveTab, loadResults]);
 
-  const saveResult = async (resultData) => {
+  const PENDING_RESULTS_STORAGE_KEY = 'ptis_pending_results';
+  const PENDING_RESULTS_BASE_DELAY_MS = 5000;
+  const PENDING_RESULTS_MAX_DELAY_MS = 5 * 60 * 1000;
+
+  const buildPendingResultKey = (resultData) =>
+    `${resultData?.ID ?? ''}|${resultData?.STANDARD ?? ''}|${resultData?.DATE ?? ''}`;
+
+  const loadPendingResults = () => {
+    if (typeof window === 'undefined') return [];
+    try {
+      const raw = localStorage.getItem(PENDING_RESULTS_STORAGE_KEY);
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (err) {
+      console.warn('Failed to read pending results:', err);
+      return [];
+    }
+  };
+
+  const persistPendingResults = (items) => {
+    if (typeof window === 'undefined') return;
+    try {
+      localStorage.setItem(PENDING_RESULTS_STORAGE_KEY, JSON.stringify(items));
+    } catch (err) {
+      console.warn('Failed to persist pending results:', err);
+    }
+  };
+
+  const enqueuePendingResult = (resultData) => {
+    const key = buildPendingResultKey(resultData);
+    if (!key) return;
+    const now = Date.now();
+    const items = loadPendingResults();
+    const index = items.findIndex((item) => item.key === key);
+    const nextAttemptAt = now + PENDING_RESULTS_BASE_DELAY_MS;
+
+    if (index >= 0) {
+      items[index] = {
+        ...items[index],
+        payload: resultData,
+        nextAttemptAt
+      };
+    } else {
+      items.push({
+        key,
+        payload: resultData,
+        attempts: 0,
+        nextAttemptAt
+      });
+    }
+
+    persistPendingResults(items);
+  };
+
+  const sendResultToServer = useCallback(async (resultData, { silent = false } = {}) => {
     try {
       const response = await fetch(`${API_BASE_URL}/api/results`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(resultData) // sends STANDARD
+        body: JSON.stringify(resultData)
       });
       if (!response.ok) {
         throw new Error(`Failed to Save Result: ${response.statusText}`);
       }
       const responseData = await response.json();
       console.log('Save Result Response:', responseData);
-      showToast('Test result saved successfully!', 'success');
+      if (!silent) showToast('Test result saved successfully!', 'success');
       return true;
     } catch (err) {
-      setError('Failed to Save Result to Database: ' + err.message);
-      console.error('Error Saving Result:', err);
-      showToast('Failed to save test result to database', 'error');
+      if (!silent) {
+        setError('Failed to Save Test Result to Database: ' + err.message);
+        console.error('Error Saving Result:', err);
+        showToast('Failed to save test result to database', 'error');
+      }
       return false;
     }
+  }, [API_BASE_URL, showToast]);
+
+  const flushPendingResults = useCallback(async () => {
+    const isOnline = typeof navigator === 'undefined' || navigator.onLine !== false;
+    if (!isOnline) return;
+
+    const items = loadPendingResults();
+    if (!items.length) return;
+
+    const now = Date.now();
+    let remaining = [...items];
+
+    for (const item of items) {
+      if (item.nextAttemptAt && item.nextAttemptAt > now) continue;
+
+      const ok = await sendResultToServer(item.payload, { silent: true });
+      if (ok) {
+        remaining = remaining.filter((entry) => entry.key !== item.key);
+      } else {
+        const attempts = (item.attempts || 0) + 1;
+        const delay = Math.min(
+          PENDING_RESULTS_BASE_DELAY_MS * Math.pow(2, attempts),
+          PENDING_RESULTS_MAX_DELAY_MS
+        );
+        remaining = remaining.map((entry) =>
+          entry.key === item.key
+            ? { ...entry, attempts, nextAttemptAt: Date.now() + delay }
+            : entry
+        );
+      }
+    }
+
+    persistPendingResults(remaining);
+  }, [sendResultToServer]);
+
+  useEffect(() => {
+    flushPendingResults();
+
+    const intervalId = setInterval(() => {
+      flushPendingResults();
+    }, 15000);
+
+    const handleOnline = () => flushPendingResults();
+    window.addEventListener('online', handleOnline);
+
+    return () => {
+      clearInterval(intervalId);
+      window.removeEventListener('online', handleOnline);
+    };
+  }, [flushPendingResults]);
+
+  const saveResult = async (resultData) => {
+    const saved = await sendResultToServer(resultData, { silent: false });
+    if (!saved) {
+      enqueuePendingResult(resultData);
+      showToast('Result will retry automatically until saved.', 'info');
+    }
+    return saved;
   };
 
   // // --- Add/Update Employee API
@@ -4531,7 +4645,7 @@ const TestingModule = () => {
                       </div>
                       <ResponsiveContainer width="100%" height={300}>
                         <LineChart
-                          data={filteredResults.slice(0, 20).map((r, idx) => ({
+                          data={filteredResults.slice(-20).map((r, idx) => ({
                             test: `Test ${idx + 1}`,
                             score: toPctNumber(r.PERCENTAGE),
                             name: norm(r.NAME)

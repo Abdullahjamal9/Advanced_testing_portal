@@ -682,6 +682,29 @@ app.delete('/api/questions/bulk', async (req, res) => {
   }
 });
 
+// Bulk Delete Questions (POST fallback for clients that drop DELETE bodies)
+app.post('/api/questions/bulk-delete', async (req, res) => {
+  const { nos } = req.body || {};
+  if (!Array.isArray(nos) || nos.length === 0) {
+    return res.status(400).json({ error: 'Provide a non-empty array of question IDs in body.nos' });
+  }
+  const numericNos = nos.map(n => parseInt(n, 10)).filter(n => !isNaN(n));
+  if (numericNos.length === 0) {
+    return res.status(400).json({ error: 'No valid numeric IDs provided' });
+  }
+  try {
+    const placeholders = numericNos.map(() => '?').join(',');
+    const [result] = await pool.query(
+      `DELETE FROM questions WHERE NO IN (${placeholders})`,
+      numericNos
+    );
+    res.json({ ok: true, deleted: result.affectedRows });
+  } catch (e) {
+    console.error('Questions Bulk Delete Error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Delete Question
 app.delete('/api/questions/:no', async (req, res) => {
   const { no } = req.params;
