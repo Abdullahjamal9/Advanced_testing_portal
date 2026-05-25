@@ -133,14 +133,13 @@ Certificate Generation
 - HTML5
 - CSS3
 - JavaScript
-- Bootstrap
 
 ### Backend
 - Node.js
 - Express.js
 
 ### Database
-- MongoDB / MySQL
+- MySQL
 
 ### Other Tools
 - Chart.js
