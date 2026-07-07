@@ -39,7 +39,8 @@ const StandardsAdminPage = ({ onBack, showToast }) => {
     Minutes: '0',
     Seconds: '0',
     Negative_Marking: 'Yes',
-    Certificate_Template: ''
+    Certificate_Template: '',
+    Has_Practical: false
   });
 
   const isMobile = viewportWidth <= 768;
@@ -130,7 +131,8 @@ const StandardsAdminPage = ({ onBack, showToast }) => {
       Minutes: '0',
       Seconds: '0',
       Negative_Marking: 'Yes',
-      Certificate_Template: ''
+      Certificate_Template: '',
+      Has_Practical: false
     });
     setShowModal(true);
   };
@@ -151,7 +153,8 @@ const StandardsAdminPage = ({ onBack, showToast }) => {
       Minutes: info?.Minutes || '0',
       Seconds: info?.Seconds || '0',
       Negative_Marking: standard.Negative_Marking || 'Yes',
-      Certificate_Template: standard.Certificate_Template || ''
+      Certificate_Template: standard.Certificate_Template || '',
+      Has_Practical: !!standard.Has_Practical
     });
     setShowModal(true);
   };
@@ -283,7 +286,8 @@ const StandardsAdminPage = ({ onBack, showToast }) => {
               Standard_List: formData.Standard_List,
               Short_Name: formData.Short_Name,
               Negative_Marking: formData.Negative_Marking,
-              Certificate_Template: formData.Certificate_Template
+              Certificate_Template: formData.Certificate_Template,
+              Has_Practical: formData.Has_Practical
             })
           }),
           fetch(`${API_BASE_URL}/api/info/${encodeURIComponent(currentStandard)}`, {
@@ -314,7 +318,8 @@ const StandardsAdminPage = ({ onBack, showToast }) => {
               Standard_List: formData.Standard_List,
               Short_Name: formData.Short_Name,
               Negative_Marking: formData.Negative_Marking,
-              Certificate_Template: formData.Certificate_Template
+              Certificate_Template: formData.Certificate_Template,
+              Has_Practical: formData.Has_Practical
             })
           }),
           fetch(`${API_BASE_URL}/api/info`, {
@@ -396,11 +401,12 @@ const StandardsAdminPage = ({ onBack, showToast }) => {
             Minutes: '0',
             Seconds: '0',
             Negative_Marking: 'Yes',
-            Certificate_Template: ''
+            Certificate_Template: '',
+            Has_Practical: false
           });
           setShowModal(true);
-        }} 
-        style={{ display: 'none' }} 
+        }}
+        style={{ display: 'none' }}
       />
       
       <div style={{ maxWidth: '1400px', margin: '0 auto', padding: isMobile ? '0 6px' : 0 }}>
@@ -785,8 +791,50 @@ overflow: 'hidden',
             maxHeight: '90vh',
             overflowY: 'auto',
             boxShadow: '0 20px 60px rgba(0, 0, 0, 0.3)',
-            animation: 'fadeIn 0.2s ease'
+            animation: 'fadeIn 0.2s ease',
+            position: 'relative'
           }}>
+            <button
+              type="button"
+              onClick={() => {
+                setShowModal(false);
+                resetTemplateFile();
+              }}
+              aria-label="Close"
+              onMouseEnter={(e) => {
+                e.currentTarget.style.backgroundColor = '#c0392b';
+                e.currentTarget.style.color = '#fff';
+                e.currentTarget.style.borderColor = '#c0392b';
+                e.currentTarget.style.boxShadow = '0 6px 16px rgba(192, 57, 43, 0.35)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.backgroundColor = colors.cardAltBg;
+                e.currentTarget.style.color = colors.text;
+                e.currentTarget.style.borderColor = colors.inputBorder;
+                e.currentTarget.style.boxShadow = 'none';
+              }}
+              style={{
+                position: 'absolute',
+                top: '12px',
+                right: '12px',
+                width: '34px',
+                height: '34px',
+                borderRadius: '50%',
+                border: `1px solid ${colors.inputBorder}`,
+                backgroundColor: colors.cardAltBg,
+                color: colors.text,
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                cursor: 'pointer',
+                fontSize: '16px',
+                fontWeight: 700,
+                lineHeight: 1,
+                transition: 'all 0.2s ease'
+              }}
+            >
+              X
+            </button>
             <h3 style={{ 
               marginTop: 0, 
               marginBottom: '25px',
@@ -1166,6 +1214,37 @@ overflow: 'hidden',
                     </span>
                   </label>
                 </div>
+              </div>
+
+              {/* Has Practical */}
+              <div style={{ marginBottom: '24px' }}>
+                <label style={{ display: 'block', marginBottom: '10px', fontWeight: '600', color: colors.text, fontSize: '0.95em' }}>
+                  Has Practical Exam
+                </label>
+                <label style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '12px',
+                  padding: '15px 20px',
+                  border: `2px solid ${formData.Has_Practical ? '#2563eb' : colors.inputBorder}`,
+                  borderRadius: '28px',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s ease',
+                  backgroundColor: formData.Has_Practical ? (isDarkMode ? '#1e2d4a' : '#eff6ff') : colors.inputBg,
+                  userSelect: 'none'
+                }}>
+                  <input
+                    type="checkbox"
+                    checked={!!formData.Has_Practical}
+                    onChange={e => setFormData(prev => ({ ...prev, Has_Practical: e.target.checked }))}
+                    style={{ width: '18px', height: '18px', cursor: 'pointer', accentColor: '#2563eb' }}
+                  />
+                  <span style={{ fontWeight: '600', color: formData.Has_Practical ? '#2563eb' : colors.textMuted }}>
+                    {formData.Has_Practical
+                      ? 'Practical exam required — certificate will show theory + practical results'
+                      : 'No practical exam for this standard'}
+                  </span>
+                </label>
               </div>
 
               <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '30px', flexWrap: 'wrap' }}>

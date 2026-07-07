@@ -221,6 +221,23 @@ async function ensureResultAttachmentColumns() {
   }
 }
 
+async function ensureStandardHasPracticalColumn() {
+  const dbName = process.env.DB_NAME || 'ptis_testing';
+  try {
+    const [rows] = await pool.query(
+      `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+       WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'standard' AND COLUMN_NAME = 'Has_Practical'`,
+      [dbName]
+    );
+    if (rows.length === 0) {
+      await pool.query(`ALTER TABLE standard ADD COLUMN Has_Practical TINYINT(1) NOT NULL DEFAULT 0`);
+      console.log('✅ standard.Has_Practical column added');
+    }
+  } catch (err) {
+    console.warn('⚠️ Could not ensure standard.Has_Practical column:', err.message);
+  }
+}
+
 db.connect((err) => {
   if (err) {
     console.error('Error Connecting to MySQL:', err);
@@ -239,6 +256,7 @@ db.on('error', (err) => {
 
 ensureCertificateHistoryTable();
 ensureResultAttachmentColumns();
+ensureStandardHasPracticalColumn();
 
 /* ---------------------- Request logger -------------------------- */
 app.use((req, res, next) => {
@@ -397,7 +415,7 @@ app.delete('/api/employees/:id', async (req, res) => {
 /* ---------------------------- Standards ------------------------- */
 app.get('/api/standards', (req, res) => {
   db.query(
-    'SELECT Standard_List, Short_Name, Negative_Marking, Certificate_Template FROM standard ORDER BY Standard_List',
+    'SELECT Standard_List, Short_Name, Negative_Marking, Certificate_Template, Has_Practical FROM standard ORDER BY Standard_List',
     (err, results) => {
       if (err) return res.status(500).json({ error: 'Database Error', details: err.message });
       res.json(results);
@@ -406,7 +424,7 @@ app.get('/api/standards', (req, res) => {
 });
 
 /* ---------------------------- Questions ------------------------- */
-const normalizeQuestionKey = (text) => String(text || '').trim().toLowerCase();
+const normalizeQuestionKey = (text) => String(text || '').replace(/\s+/g, ' ').trim().toLowerCase();
 
 // Questions count endpoint – returns DB total and per-standard breakdown
 app.get('/api/questions/count', (req, res) => {
@@ -509,7 +527,7 @@ app.post('/api/questions', async (req, res) => {
     const questionKey = normalizeQuestionKey(Question);
     const [dupRows] = await pool.query(
       `SELECT 1 FROM questions
-       WHERE LOWER(TRIM(Question)) = ?
+       WHERE LOWER(TRIM(REGEXP_REPLACE(Question, '[[:space:]]+', ' '))) = ?
        LIMIT 1`,
       [questionKey]
     );
@@ -517,10 +535,17 @@ app.post('/api/questions', async (req, res) => {
       return res.status(409).json({ error: 'Duplicate question already exists' });
     }
 
+    const cleanQuestion = String(Question).replace(/\s+/g, ' ').trim();
+    const cleanOptA = String(Opt_A).trim();
+    const cleanOptB = String(Opt_B).trim();
+    const cleanOptC = String(Opt_C).trim();
+    const cleanOptD = String(Opt_D).trim();
+    const cleanStandard = String(Standard_List).trim();
+
     const [result] = await pool.query(
-      `INSERT INTO questions (Question, Opt_A, Opt_B, Opt_C, Opt_D, Answer, Standard_List) 
+      `INSERT INTO questions (Question, Opt_A, Opt_B, Opt_C, Opt_D, Answer, Standard_List)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [Question, Opt_A, Opt_B, Opt_C, Opt_D, Answer, Standard_List]
+      [cleanQuestion, cleanOptA, cleanOptB, cleanOptC, cleanOptD, Answer.toString().toUpperCase(), cleanStandard]
     );
     res.json({ ok: true, NO: result.insertId });
   } catch (e) {
@@ -590,10 +615,17 @@ app.post('/api/questions/bulk', async (req, res) => {
     }
     seenKeys.add(dedupeKey);
 
+    const cleanQuestion = String(q.Question).replace(/\s+/g, ' ').trim();
+    const cleanOptA = String(q.Opt_A).trim();
+    const cleanOptB = String(q.Opt_B).trim();
+    const cleanOptC = String(q.Opt_C).trim();
+    const cleanOptD = String(q.Opt_D).trim();
+    const cleanStandard = String(q.Standard_List).trim();
+
     try {
       const [dupRows] = await pool.query(
         `SELECT 1 FROM questions
-         WHERE LOWER(TRIM(Question)) = ?
+         WHERE LOWER(TRIM(REGEXP_REPLACE(Question, '[[:space:]]+', ' '))) = ?
          LIMIT 1`,
         [questionKey]
       );
@@ -608,9 +640,9 @@ app.post('/api/questions/bulk', async (req, res) => {
       }
 
       await pool.query(
-        `INSERT INTO questions (Question, Opt_A, Opt_B, Opt_C, Opt_D, Answer, Standard_List) 
+        `INSERT INTO questions (Question, Opt_A, Opt_B, Opt_C, Opt_D, Answer, Standard_List)
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [q.Question, q.Opt_A, q.Opt_B, q.Opt_C, q.Opt_D, answer, q.Standard_List]
+        [cleanQuestion, cleanOptA, cleanOptB, cleanOptC, cleanOptD, answer, cleanStandard]
       );
       successCount++;
     } catch (e) {
@@ -790,15 +822,17 @@ app.get('/api/info', (req, res) => {
 
 // Add/Update Standard
 app.post('/api/standards', async (req, res) => {
-  const { Standard_List, Short_Name, Total_Questions, Passing_Criteria, Hours, Minutes, Seconds, Negative_Marking, Certificate_Template } = req.body || {};
+  const { Standard_List, Short_Name, Total_Questions, Passing_Criteria, Hours, Minutes, Seconds, Negative_Marking, Certificate_Template, Has_Practical } = req.body || {};
   if (!Standard_List) return res.status(400).json({ error: 'Standard_List is required' });
+
+  const hasPracticalVal = Has_Practical ? 1 : 0;
 
   try {
     // Insert/Update standard
     await pool.query(
-      `INSERT INTO standard (Standard_List, Short_Name, Negative_Marking, Certificate_Template) VALUES (?, ?, ?, ?)
-       ON DUPLICATE KEY UPDATE Short_Name = VALUES(Short_Name), Negative_Marking = VALUES(Negative_Marking), Certificate_Template = VALUES(Certificate_Template)`,
-      [Standard_List, Short_Name || '', Negative_Marking || 'Yes', Certificate_Template || '']
+      `INSERT INTO standard (Standard_List, Short_Name, Negative_Marking, Certificate_Template, Has_Practical) VALUES (?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE Short_Name = VALUES(Short_Name), Negative_Marking = VALUES(Negative_Marking), Certificate_Template = VALUES(Certificate_Template), Has_Practical = VALUES(Has_Practical)`,
+      [Standard_List, Short_Name || '', Negative_Marking || 'Yes', Certificate_Template || '', hasPracticalVal]
     );
 
     // Insert/Update info if additional fields provided
@@ -833,8 +867,9 @@ app.post('/api/standards', async (req, res) => {
 // Update Standard
 app.put('/api/standards/:standard', async (req, res) => {
   const { standard } = req.params;
-  const { Standard_List, Short_Name, Negative_Marking, Certificate_Template } = req.body || {};
+  const { Standard_List, Short_Name, Negative_Marking, Certificate_Template, Has_Practical } = req.body || {};
   const newStandard = Standard_List || standard;
+  const hasPracticalVal = Has_Practical ? 1 : 0;
 
   let conn;
   try {
@@ -853,8 +888,8 @@ app.put('/api/standards/:standard', async (req, res) => {
     }
 
     const [result] = await conn.query(
-      'UPDATE standard SET Standard_List = ?, Short_Name = ?, Negative_Marking = ?, Certificate_Template = ? WHERE Standard_List = ?',
-      [newStandard, Short_Name || '', Negative_Marking || 'Yes', Certificate_Template || '', standard]
+      'UPDATE standard SET Standard_List = ?, Short_Name = ?, Negative_Marking = ?, Certificate_Template = ?, Has_Practical = ? WHERE Standard_List = ?',
+      [newStandard, Short_Name || '', Negative_Marking || 'Yes', Certificate_Template || '', hasPracticalVal, standard]
     );
 
     if (result.affectedRows === 0) {
@@ -1519,15 +1554,16 @@ app.get('/api/certificates/previous-number', async (req, res) => {
 });
 
 app.post('/api/certificates/generate', async (req, res) => {
-  const { 
-    emp_id, 
-    emp_name, 
-    test_date, 
-    status, 
-    standard, 
-    percentage, 
+  const {
+    emp_id,
+    emp_name,
+    test_date,
+    status,
+    standard,
+    percentage,
     passing_criteria,
     is_combined,
+    has_practical,
     general_data,
     specific_data,
     practical_data,
@@ -1610,6 +1646,29 @@ app.post('/api/certificates/generate', async (req, res) => {
           percentage: practical_data.percentage.toString().replace('%', ''),
           passing_criteria: practical_data.passing_criteria.toString().replace('%', '')
         };
+      }
+    } else if (has_practical && practical_data) {
+      // Single standard with practical — double-row certificate
+      certOptions.has_practical = true;
+      certOptions.percentage = percentage ? percentage.toString().replace('%', '') : null;
+      certOptions.passing_criteria = passing_criteria ? passing_criteria.toString().replace('%', '') : '80';
+      certOptions.practical_data = {
+        standard: practical_data.standard,
+        percentage: practical_data.percentage.toString().replace('%', ''),
+        passing_criteria: practical_data.passing_criteria.toString().replace('%', '')
+      };
+
+      // Also check template using practical standard name
+      if (!certificate_template && practical_data.standard) {
+        try {
+          const [rows] = await pool.query(
+            'SELECT Certificate_Template FROM standard WHERE Standard_List = ?',
+            [String(practical_data.standard).trim()]
+          );
+          if (rows && rows.length > 0 && rows[0].Certificate_Template) {
+            certOptions.certificate_template = String(rows[0].Certificate_Template).trim();
+          }
+        } catch (_) { /* ignore */ }
       }
     } else {
       // Regular single certificate

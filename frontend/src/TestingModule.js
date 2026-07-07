@@ -683,6 +683,11 @@ const TestingModule = () => {
     setLoading(false);
   };
 
+  const loadStandards = useCallback(async () => {
+    const data = await fetchData('/standards');
+    if (data) setStandards(data);
+  }, [fetchData]);
+
   const fetchTestInfo = async (standard) => {
     const enc = encodeURIComponent(standard);
     const data = await fetchData(`/info?standard=${enc}`);
@@ -1045,6 +1050,13 @@ const TestingModule = () => {
     if (showLoader) setAdminLoading(false);
   }, [fetchData]);
 
+  // Refresh standards whenever admin switches tabs (picks up Has_Practical changes etc.)
+  useEffect(() => {
+    if (isAdmin && currentPage === 'admin') {
+      loadStandards();
+    }
+  }, [adminActiveTab, isAdmin, currentPage, loadStandards]);
+
   // Keep results fresh while admin is actively viewing the Test Results tab.
   useEffect(() => {
     if (!(isAdmin && currentPage === 'admin' && adminActiveTab === 'results')) return;
@@ -1384,7 +1396,7 @@ const TestingModule = () => {
     const remainingSkipped = isReviewingSkipped ? questions.length - currentQuestion : skipped.length;
 
     return (
-      <div style={{ minHeight: '100vh', height: '100%', backgroundColor: theme.bg.secondary, paddingTop: '80px' }}>
+      <div style={{ minHeight: '100vh', height: '100%', backgroundColor: theme.bg.secondary, paddingTop: '80px', userSelect: 'none', WebkitUserSelect: 'none', MozUserSelect: 'none', msUserSelect: 'none' }}>
         <div style={{ 
           backgroundColor: '#1a1a2e', 
           boxShadow: '0 2px 10px rgba(0,0,0,0.3)', 
@@ -1870,14 +1882,13 @@ const TestingModule = () => {
             <div style={{ textAlign: 'center' }}>
               <button
                 onClick={resetTest}
+                className="login-btn"
                 style={{
-                  ...commonStyles.button,
-                  fontSize: '1.2em',
-                  padding: '15px 40px',
-                  width: isMobile ? '100%' : 'auto',
-                  background: 'linear-gradient(120deg, #c0392b, #e74c3c)',
-                  boxShadow: '0 4px 15px rgba(192, 57, 43, 0.3)',
-                  textTransform: 'none'
+                  width: 'auto',
+                  padding: '14px 28px',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '8px'
                 }}
               >
                 <Home size={22} />
@@ -2611,6 +2622,8 @@ const TestingModule = () => {
     // Certificate Management Page Component - Memoized to prevent re-renders on parent state changes
     const CertificatesAdminPage = useMemo(() => {
       return function CertificatesAdminPageInner() {
+        const results = resultsRef.current;
+        const standards = standardsRef.current;
         const theme = themeRef.current;
         const isDarkMode = isDarkModeRef.current;
         const colors = colorsRef.current;
@@ -2746,11 +2759,48 @@ const TestingModule = () => {
           }
         });
         
+        // Standards that have Has_Practical flag set in DB (lowercase set for fast lookup)
+        const hasPracticalStandardsSet = new Set(
+          standards
+            .filter(s => s.Has_Practical)
+            .map(s => String(s.Standard_List || '').trim().toLowerCase())
+        );
+
+        // Build lookup of practical-only groups (have practical but no general/specific/single)
+        // Key: empId_baseType (lowercase)
+        const practicalOnlyLookup = {};
+        Object.values(grouped).forEach(group => {
+          if (group.practical && !group.single && !group.general && !group.specific) {
+            practicalOnlyLookup[`${group.empId}_${group.baseType.toLowerCase()}`] = group;
+          }
+        });
+
         // Convert grouped results to array
         const finalResults = [];
         Object.values(grouped).forEach(group => {
           if (group.single) {
-            // Regular single certificate
+            const baseTypeLower = group.baseType.toLowerCase();
+            if (hasPracticalStandardsSet.has(baseTypeLower)) {
+              // Practical is REQUIRED for this standard.
+              // Certificate only appears when BOTH theory AND practical have passed.
+              // If practical is missing or invalid → don't show at all (same as 3-row logic).
+              const practicalGroup = practicalOnlyLookup[`${group.empId}_${baseTypeLower}`];
+              if (practicalGroup) {
+                const theoryTimestamp = toSortableTimestamp(group.single?.DATE);
+                const practicalTimestamp = toSortableTimestamp(practicalGroup.practical?.DATE);
+                if (practicalTimestamp >= theoryTimestamp) {
+                  finalResults.push({
+                    ...group.single,
+                    HAS_PRACTICAL: true,
+                    PRACTICAL_DATA: practicalGroup.practical
+                  });
+                }
+              }
+              // No practical yet (or not valid) → skip entirely, don't show certificate
+              return;
+            }
+
+            // Standard without Has_Practical → single row certificate as before
             finalResults.push(group.single);
           } else if (group.general && group.specific) {
             // PT/MPT with both tests passed - show as single row for combined certificate
@@ -2780,7 +2830,7 @@ const TestingModule = () => {
         });
         
         return finalResults;
-      }, [searchType, searchQuery, isPass, norm]);
+      }, [searchType, searchQuery, isPass, norm, standards, results]);
 
       const totalCertificatePages = Math.ceil(filteredResults.length / certificateItemsPerPage);
       const paginatedCertificateResults = filteredResults.slice(
@@ -3126,6 +3176,24 @@ const TestingModule = () => {
                                       passing_criteria: norm(result.PRACTICAL_DATA.PASSING_CRITERIA)
                                     };
                                   }
+                                } else if (result.HAS_PRACTICAL && result.PRACTICAL_DATA) {
+                                  // Single standard + practical (double-row certificate)
+                                  certData = {
+                                    emp_id: norm(result.ID),
+                                    emp_name: norm(result.NAME),
+                                    test_date: norm(result.DATE),
+                                    status: norm(result.STATUS),
+                                    standard: norm(result.STANDARD),
+                                    percentage: toPctNumber(result.PERCENTAGE).toFixed(2),
+                                    passing_criteria: norm(result.PASSING_CRITERIA),
+                                    has_practical: true,
+                                    practical_data: {
+                                      standard: norm(result.PRACTICAL_DATA.STANDARD),
+                                      percentage: toPctNumber(result.PRACTICAL_DATA.PERCENTAGE).toFixed(2),
+                                      passing_criteria: norm(result.PRACTICAL_DATA.PASSING_CRITERIA)
+                                    },
+                                    certification_type: selectedCertType
+                                  };
                                 } else {
                                   // Regular single certificate
                                   certData = {
@@ -3335,6 +3403,8 @@ const TestingModule = () => {
     };
     }, [norm, isPass, toPctNumber, results]); // Recreate when results change to avoid stale data
 
+    const showSidebarLabel = !isMobile && sidebarHovered;
+
     return (
       <div style={{ display: 'flex', minHeight: '100vh', backgroundColor: theme.bg.primary }}>
         {/* Sidebar */}
@@ -3346,7 +3416,7 @@ const TestingModule = () => {
             if (!isMobile) setSidebarHovered(false);
           }}
           style={{
-          width: isMobile ? '64px' : sidebarHovered ? '260px' : '80px',
+          width: isMobile ? '64px' : sidebarHovered ? '220px' : '80px',
           backgroundColor: '#1a1a2e',
           boxShadow: '2px 0 10px rgba(0,0,0,0.1)',
           display: 'flex',
@@ -3357,41 +3427,41 @@ const TestingModule = () => {
           top: 0,
           borderTopRightRadius: isMobile ? '0' : '20px',
           borderBottomRightRadius: isMobile ? '0' : '20px',
-          transition: 'width 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+          transition: 'width 0.5s cubic-bezier(0.22, 0.61, 0.36, 1), box-shadow 0.5s ease',
           overflow: 'hidden',
           willChange: 'width',
           zIndex: 1000
         }}>
           {/* Logo/Header */}
           <div style={{
-            padding: '25px 20px',
+            padding: '16px 20px',
             borderBottom: '1px solid rgba(255,255,255,0.1)',
-            textAlign: 'center',
             whiteSpace: 'nowrap',
             display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center'
+            alignItems: 'center',
+            justifyContent: 'flex-start',
+            gap: showSidebarLabel ? '10px' : '0'
           }}>
             <div 
               onClick={() => setAdminActiveTab('dashboard')}
               style={{
                 backgroundColor: '#ffffff',
                 border: '2px solid #ffffff',
-                borderRadius: '25px',
-                padding: '5px',
+                borderRadius: '20px',
+                padding: '2px',
+                width: '40px',
+                height: '40px',
+                boxSizing: 'border-box',
                 display: 'inline-flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                marginBottom: '10px',
                 cursor: 'pointer',
-                transition: 'transform 0.2s ease, box-shadow 0.2s ease'
+                transition: 'box-shadow 0.2s ease'
               }}
               onMouseOver={(e) => {
-                e.currentTarget.style.transform = 'scale(1.05)';
                 e.currentTarget.style.boxShadow = '0 4px 12px rgba(255,255,255,0.3)';
               }}
               onMouseOut={(e) => {
-                e.currentTarget.style.transform = 'scale(1)';
                 e.currentTarget.style.boxShadow = 'none';
               }}
             >
@@ -3399,12 +3469,24 @@ const TestingModule = () => {
                 src={ptisLogo} 
                 alt="PTIS Logo" 
                 style={{ 
-                  width: '35px', 
-                  height: '35px',
+                  width: '32px', 
+                  height: '32px',
                   objectFit: 'contain'
                 }} 
               />
             </div>
+            <span style={{
+              fontSize: '0.95rem',
+              fontWeight: 600,
+              color: '#ffffff',
+              maxWidth: showSidebarLabel ? '120px' : '0px',
+              opacity: showSidebarLabel ? 1 : 0,
+              transform: showSidebarLabel ? 'translateX(0)' : 'translateX(-6px)',
+              transition: 'max-width 0.3s ease, opacity 0.2s ease, transform 0.3s ease',
+              overflow: 'hidden'
+            }}>
+              Testing Portal
+            </span>
           </div>
 
           {/* Navigation */}
@@ -3412,13 +3494,14 @@ const TestingModule = () => {
             {sidebarItems.map(item => {
               const Icon = item.icon;
               const isActive = adminActiveTab === item.id;
+              const showLabel = showSidebarLabel;
               return (
                 <button
                   key={item.id}
                   onClick={() => setAdminActiveTab(item.id)}
                   style={{
                     width: '100%',
-                    padding: '15px 20px',
+                    padding: isMobile ? '10px 14px' : '10px 20px',
                     border: 'none',
                     backgroundColor: isActive ? 'rgba(192, 57, 43, 0.2)' : 'transparent',
                     borderLeft: isActive ? '4px solid transparent' : '4px solid transparent',
@@ -3427,8 +3510,8 @@ const TestingModule = () => {
                     cursor: 'pointer',
                     display: 'flex',
                     alignItems: 'center',
-                    justifyContent: !isMobile && sidebarHovered ? 'flex-start' : 'center',
-                    gap: '12px',
+                    justifyContent: 'flex-start',
+                    gap: showLabel ? '10px' : '0',
                     fontSize: '0.95em',
                     fontWeight: isActive ? 'bold' : 'normal',
                     transition: 'all 0.2s ease',
@@ -3441,15 +3524,33 @@ const TestingModule = () => {
                     if (!isActive) e.currentTarget.style.backgroundColor = 'transparent';
                   }}
                 >
-                  <Icon size={20} />
-                  {!isMobile && sidebarHovered && item.label}
+                  <span style={{
+                    width: '40px',
+                    height: '40px',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    flexShrink: 0
+                  }}>
+                    <Icon size={18} />
+                  </span>
+                  <span style={{
+                    maxWidth: showLabel ? '120px' : '0px',
+                    opacity: showLabel ? 1 : 0,
+                    transform: showLabel ? 'translateX(0)' : 'translateX(-6px)',
+                    transition: 'max-width 0.3s ease, opacity 0.2s ease, transform 0.3s ease',
+                    overflow: 'hidden',
+                    whiteSpace: 'nowrap'
+                  }}>
+                    {item.label}
+                  </span>
                 </button>
               );
             })}
           </nav>
 
           {/* Logout Button */}
-          <div style={{ padding: '20px', borderTop: '1px solid rgba(255,255,255,0.1)', marginTop: 'auto' }}>
+          <div style={{ padding: '20px', borderTop: '1px solid rgba(255,255,255,0.1)', marginTop: 'auto', display: 'flex', justifyContent: showSidebarLabel ? 'flex-start' : 'center' }}>
             <button
               onClick={() => {
                 setIsAdmin(false);
@@ -5093,8 +5194,47 @@ const TestingModule = () => {
                       maxHeight: '90vh',
                       overflowY: 'auto',
                       boxShadow: `0 20px 60px ${isDarkMode ? 'rgba(0,0,0,0.5)' : 'rgba(0, 0, 0, 0.3)'}`,
-                      animation: 'fadeIn 0.2s ease'
+                      animation: 'fadeIn 0.2s ease',
+                      position: 'relative'
                     }}>
+                      <button
+                        type="button"
+                        onClick={closeAddResultModal}
+                        aria-label="Close"
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.backgroundColor = '#c0392b';
+                          e.currentTarget.style.color = '#fff';
+                          e.currentTarget.style.borderColor = '#c0392b';
+                          e.currentTarget.style.boxShadow = '0 6px 16px rgba(192, 57, 43, 0.35)';
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.backgroundColor = colors.cardAltBg;
+                          e.currentTarget.style.color = colors.text;
+                          e.currentTarget.style.borderColor = colors.inputBorder;
+                          e.currentTarget.style.boxShadow = 'none';
+                        }}
+                        style={{
+                          position: 'absolute',
+                          top: '12px',
+                          right: '12px',
+                          width: '34px',
+                          height: '34px',
+                          borderRadius: '50%',
+                          border: `1px solid ${colors.inputBorder}`,
+                          backgroundColor: colors.cardAltBg,
+                          color: colors.text,
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          cursor: 'pointer',
+                          fontSize: '16px',
+                          fontWeight: 700,
+                          lineHeight: 1,
+                          transition: 'all 0.2s ease'
+                        }}
+                      >
+                        X
+                      </button>
                       <h3 style={{
                         marginTop: 0,
                         marginBottom: '25px',
@@ -5723,6 +5863,7 @@ const TestingModule = () => {
     const [editMode, setEditMode] = useState(false);
     const [currentResult, setCurrentResult] = useState(null);
     const [isPracticalPercentageManuallyEdited, setIsPracticalPercentageManuallyEdited] = useState(false);
+    const [availableStandards, setAvailableStandards] = useState([]);
     const [formData, setFormData] = useState({
       employeeId: '',
       employeeName: '',
@@ -5738,6 +5879,7 @@ const TestingModule = () => {
     const [searchQuery, setSearchQuery] = useState('');
     const [attachmentFile, setAttachmentFile] = useState(null);
     const attachmentInputRef = useRef(null);
+    const [practicalActiveTable, setPracticalActiveTable] = useState('results');
 
     const calculatePracticalPercentage = useCallback((totalQuestionsValue, correctAnswersValue) => {
       const totalQuestions = parseInt(totalQuestionsValue, 10);
@@ -5906,10 +6048,14 @@ const TestingModule = () => {
         if (!stdName) return;
         const stdLower = stdName.toLowerCase();
         if (stdLower.includes('general') || stdLower.includes('specific')) {
+          // Combined (PT/MPT) standards — derive practical name from base
           const baseType = normalizePracticalBaseType(stdName);
           if (baseType) {
             generalizedNames.add(`${baseType.display} (Practical)`);
           }
+        } else if (s.Has_Practical) {
+          // Single standards with Has_Practical flag — directly add "(Practical)" variant
+          generalizedNames.add(`${stdName} (Practical)`);
         }
       });
       return Array.from(generalizedNames).sort((a, b) => a.localeCompare(b));
@@ -5940,6 +6086,13 @@ const TestingModule = () => {
         (r) => String(r.STATUS || '').trim().toUpperCase() === 'PASS'
       );
 
+      // Set of single standards that have Has_Practical flag in DB
+      const hasPracticalSet = new Set(
+        standards
+          .filter(s => s.Has_Practical)
+          .map(s => String(s.Standard_List || '').trim().toLowerCase())
+      );
+
       passed.forEach((r) => {
         const standard = String(r.STANDARD || '').trim();
         const standardLower = standard.toLowerCase();
@@ -5950,30 +6103,43 @@ const TestingModule = () => {
         const hasGeneral = standardLower.includes('general');
         const hasSpecific = standardLower.includes('specific');
 
-        if (!hasGeneral && !hasSpecific) {
-          return;
+        if (hasGeneral || hasSpecific) {
+          // Combined (PT/MPT) standard — requires both general + specific
+          const baseType = normalizePracticalBaseType(standard);
+          if (!baseType) return;
+
+          const key = `${empId}_${baseType.key}`;
+          if (!grouped[key]) {
+            grouped[key] = {
+              empId,
+              empName: r.NAME,
+              baseType: baseType.display,
+              type: 'combined',
+              general: false,
+              specific: false,
+              practical: false
+            };
+          }
+          if (hasGeneral) grouped[key].general = true;
+          if (hasSpecific) grouped[key].specific = true;
+        } else if (hasPracticalSet.has(standardLower)) {
+          // Single standard with Has_Practical flag — eligible after passing theory alone
+          const key = `${empId}_${standardLower}`;
+          if (!grouped[key]) {
+            grouped[key] = {
+              empId,
+              empName: r.NAME,
+              baseType: standard,
+              type: 'single',
+              general: true,
+              specific: true,
+              practical: false
+            };
+          }
         }
-
-        const baseType = normalizePracticalBaseType(standard);
-        if (!baseType) return;
-
-        const key = `${empId}_${baseType.key}`;
-
-        if (!grouped[key]) {
-          grouped[key] = {
-            empId,
-            empName: r.NAME,
-            baseType: baseType.display,
-            general: false,
-            specific: false,
-            practical: false,
-          };
-        }
-
-        if (hasGeneral) grouped[key].general = true;
-        if (hasSpecific) grouped[key].specific = true;
       });
 
+      // Mark practical as done for any group that has a matching practical result
       passed.forEach((r) => {
         const standard = String(r.STANDARD || '').trim();
         const standardLower = standard.toLowerCase();
@@ -5981,7 +6147,6 @@ const TestingModule = () => {
 
         const baseType = normalizePracticalBaseType(standard);
         const empId = String(r.ID || '');
-
         if (!baseType) return;
 
         const key = `${empId}_${baseType.key}`;
@@ -5998,7 +6163,7 @@ const TestingModule = () => {
           if (a.empId !== b.empId) return a.empId.localeCompare(b.empId);
           return a.baseType.localeCompare(b.baseType);
         });
-    }, [results, normalizePracticalBaseType]);
+    }, [results, standards, normalizePracticalBaseType]);
 
     const eligibleEmployeeIds = useMemo(
       () => [...new Set(eligibleEmployees.map((emp) => emp.empId))],
@@ -6039,6 +6204,16 @@ const TestingModule = () => {
     }, [eligibleEmployees.length]);
 
     useEffect(() => {
+      if (practicalActiveTable === 'eligible' && eligibleEmployees.length === 0 && practicalResults.length > 0) {
+        setPracticalActiveTable('results');
+        return;
+      }
+      if (practicalActiveTable === 'results' && practicalResults.length === 0 && eligibleEmployees.length > 0) {
+        setPracticalActiveTable('eligible');
+      }
+    }, [practicalActiveTable, eligibleEmployees.length, practicalResults.length]);
+
+    useEffect(() => {
       if (totalPracticalPages > 0 && practicalCurrentPage > totalPracticalPages) {
         setPracticalCurrentPage(totalPracticalPages);
       }
@@ -6049,6 +6224,27 @@ const TestingModule = () => {
         setEligibleCurrentPage(totalEligiblePages);
       }
     }, [eligibleCurrentPage, totalEligiblePages]);
+
+    const practicalTabBorder = colors.inputBorder || colors.border;
+    const practicalTabStyle = (isActive) => ({
+      padding: '10px 18px',
+      borderRadius: '28px',
+      border: isActive ? '2px solid #c0392b' : `2px solid ${practicalTabBorder}`,
+      background: isActive
+        ? 'linear-gradient(120deg, #c0392b, #e74c3c)'
+        : colors.cardBg,
+      color: isActive ? '#fff' : colors.text,
+      fontWeight: '700',
+      letterSpacing: '0.2px',
+      cursor: 'pointer',
+      transition: 'all 0.2s ease',
+      boxShadow: isActive
+        ? '0 10px 18px rgba(192, 57, 43, 0.25)'
+        : '0 4px 10px rgba(0,0,0,0.08)',
+      display: 'inline-flex',
+      alignItems: 'center',
+      gap: '8px'
+    });
 
     const handleSubmit = async (e) => {
       e.preventDefault();
@@ -6329,11 +6525,76 @@ const TestingModule = () => {
           </div>
         </div>
 
+        <div style={{
+          display: 'flex',
+          flexWrap: 'wrap',
+          gap: '12px',
+          alignItems: 'center',
+          marginBottom: '20px'
+        }}>
+          <button
+            type="button"
+            onClick={() => setPracticalActiveTable('eligible')}
+            style={practicalTabStyle(practicalActiveTable === 'eligible')}
+            aria-pressed={practicalActiveTable === 'eligible'}
+            onMouseOver={(e) => {
+              e.currentTarget.style.transform = 'translateY(-1px)';
+              if (practicalActiveTable !== 'eligible') {
+                e.currentTarget.style.borderColor = '#c0392b';
+                e.currentTarget.style.color = '#c0392b';
+                e.currentTarget.style.background = colors.cardAltBg;
+              } else {
+                e.currentTarget.style.filter = 'brightness(1.05)';
+              }
+            }}
+            onMouseOut={(e) => {
+              e.currentTarget.style.transform = 'translateY(0)';
+              if (practicalActiveTable !== 'eligible') {
+                e.currentTarget.style.borderColor = practicalTabBorder;
+                e.currentTarget.style.color = colors.text;
+                e.currentTarget.style.background = colors.cardBg;
+              } else {
+                e.currentTarget.style.filter = 'none';
+              }
+            }}
+          >
+            Eligible Employees ({eligibleEmployees.length})
+          </button>
+          <button
+            type="button"
+            onClick={() => setPracticalActiveTable('results')}
+            style={practicalTabStyle(practicalActiveTable === 'results')}
+            aria-pressed={practicalActiveTable === 'results'}
+            onMouseOver={(e) => {
+              e.currentTarget.style.transform = 'translateY(-1px)';
+              if (practicalActiveTable !== 'results') {
+                e.currentTarget.style.borderColor = '#c0392b';
+                e.currentTarget.style.color = '#c0392b';
+                e.currentTarget.style.background = colors.cardAltBg;
+              } else {
+                e.currentTarget.style.filter = 'brightness(1.05)';
+              }
+            }}
+            onMouseOut={(e) => {
+              e.currentTarget.style.transform = 'translateY(0)';
+              if (practicalActiveTable !== 'results') {
+                e.currentTarget.style.borderColor = practicalTabBorder;
+                e.currentTarget.style.color = colors.text;
+                e.currentTarget.style.background = colors.cardBg;
+              } else {
+                e.currentTarget.style.filter = 'none';
+              }
+            }}
+          >
+            Practical Results ({practicalResults.length})
+          </button>
+        </div>
+
         {/* Hidden trigger button */}
         <button id="practical-add-btn" onClick={() => setShowModal(true)} style={{ display: 'none' }} />
 
         {/* Eligible Employees Section */}
-        {eligibleEmployees.length > 0 && (
+        {practicalActiveTable === 'eligible' && (
           <div style={{
             backgroundColor: colors.cardBg,
             borderRadius: '28px',
@@ -6350,40 +6611,32 @@ const TestingModule = () => {
             }}>
               Employees Eligible For Practical Test
             </div>
-            <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <thead>
-                <tr style={{ backgroundColor: colors.cardAltBg }}>
-                  <th style={{ padding: '14px 20px', textAlign: 'left', fontWeight: '600', color: colors.text }}>Employee ID</th>
-                  <th style={{ padding: '14px 20px', textAlign: 'left', fontWeight: '600', color: colors.text }}>Name</th>
-                  <th style={{ padding: '14px 20px', textAlign: 'left', fontWeight: '600', color: colors.text }}>Standard</th>
-                  <th style={{ padding: '14px 20px', textAlign: 'center', fontWeight: '600', color: colors.text }}>Tests Passed</th>
-                  <th style={{ padding: '14px 20px', textAlign: 'center', fontWeight: '600', color: colors.text }}>Practical Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {paginatedEligibleEmployees.map((emp, index) => (
-                  <tr key={index} style={{
-                    borderBottom: `1px solid ${colors.border}`,
-                    backgroundColor: index % 2 === 0 ? colors.cardBg : colors.cardAltBg
-                  }}>
-                    <td style={{ padding: '14px 20px', color: colors.text }}>{emp.empId}</td>
-                    <td style={{ padding: '14px 20px', color: colors.text }}>{emp.empName}</td>
-                    <td style={{ padding: '14px 20px', color: colors.text, fontWeight: '500' }}>{emp.baseType}</td>
-                    <td style={{ padding: '14px 20px', textAlign: 'center' }}>
-                      <span style={{
-                        padding: '4px 10px',
-                        borderRadius: '28px',
-                        fontSize: '0.85em',
-                        fontWeight: '600',
-                        backgroundColor: '#d4edda',
-                        color: '#155724'
-                      }}>
-                        General + Specific
-                      </span>
-                    </td>
-                    <td style={{ padding: '14px 20px', textAlign: 'center' }}>
-                      {emp.practical ? (
+            {eligibleEmployees.length === 0 ? (
+              <div style={{ padding: '35px 20px', textAlign: 'center', color: colors.textMuted }}>
+                No eligible employees found for practical tests yet.
+              </div>
+            ) : (
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr style={{ backgroundColor: colors.cardAltBg }}>
+                    <th style={{ padding: '14px 20px', textAlign: 'left', fontWeight: '600', color: colors.text }}>Employee ID</th>
+                    <th style={{ padding: '14px 20px', textAlign: 'left', fontWeight: '600', color: colors.text }}>Name</th>
+                    <th style={{ padding: '14px 20px', textAlign: 'left', fontWeight: '600', color: colors.text }}>Standard</th>
+                    <th style={{ padding: '14px 20px', textAlign: 'center', fontWeight: '600', color: colors.text }}>Tests Passed</th>
+                    <th style={{ padding: '14px 20px', textAlign: 'center', fontWeight: '600', color: colors.text }}>Practical Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {paginatedEligibleEmployees.map((emp, index) => (
+                    <tr key={index} style={{
+                      borderBottom: `1px solid ${colors.border}`,
+                      backgroundColor: index % 2 === 0 ? colors.cardBg : colors.cardAltBg
+                    }}>
+                      <td style={{ padding: '14px 20px', color: colors.text }}>{emp.empId}</td>
+                      <td style={{ padding: '14px 20px', color: colors.text }}>{emp.empName}</td>
+                      <td style={{ padding: '14px 20px', color: colors.text, fontWeight: '500' }}>{emp.baseType}</td>
+                      <td style={{ padding: '14px 20px', textAlign: 'center' }}>
                         <span style={{
                           padding: '4px 10px',
                           borderRadius: '28px',
@@ -6392,26 +6645,40 @@ const TestingModule = () => {
                           backgroundColor: '#d4edda',
                           color: '#155724'
                         }}>
-                          ✓ Added
+                          {emp.type === 'single' ? 'Theory' : 'General + Specific'}
                         </span>
-                      ) : (
-                        <span style={{
-                          padding: '4px 10px',
-                          borderRadius: '28px',
-                          fontSize: '0.85em',
-                          fontWeight: '600',
-                          backgroundColor: '#fff3cd',
-                          color: '#856404'
-                        }}>
-                          Pending
-                        </span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-              </table>
-            </div>
+                      </td>
+                      <td style={{ padding: '14px 20px', textAlign: 'center' }}>
+                        {emp.practical ? (
+                          <span style={{
+                            padding: '4px 10px',
+                            borderRadius: '28px',
+                            fontSize: '0.85em',
+                            fontWeight: '600',
+                            backgroundColor: '#d4edda',
+                            color: '#155724'
+                          }}>
+                            ✓ Added
+                          </span>
+                        ) : (
+                          <span style={{
+                            padding: '4px 10px',
+                            borderRadius: '28px',
+                            fontSize: '0.85em',
+                            fontWeight: '600',
+                            backgroundColor: '#fff3cd',
+                            color: '#856404'
+                          }}>
+                            Pending
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+                </table>
+              </div>
+            )}
 
             {totalEligiblePages > 1 && (
               <div style={{
@@ -6522,264 +6789,266 @@ const TestingModule = () => {
         )}
 
         {/* Practical Results Table */}
-        <div style={{
-          backgroundColor: colors.cardBg,
-          borderRadius: '28px',
-          boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
-          border: `1px solid ${theme.border.default}`,
-          overflow: 'hidden'
-        }}>
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead>
-              <tr style={{ backgroundColor: colors.tableHeaderBg, color: '#fff' }}>
-                <th style={{ padding: '16px 20px', textAlign: 'left', fontWeight: '600' }}>Employee ID</th>
-                <th style={{ padding: '16px 20px', textAlign: 'left', fontWeight: '600' }}>Name</th>
-                <th style={{ padding: '16px 20px', textAlign: 'left', fontWeight: '600' }}>Standard</th>
-                <th style={{ padding: '16px 20px', textAlign: 'center', fontWeight: '600' }}>Percentage</th>
-                <th style={{ padding: '16px 20px', textAlign: 'center', fontWeight: '600' }}>Status</th>
-                <th style={{ padding: '16px 20px', textAlign: 'center', fontWeight: '600' }}>Date</th>
-                <th style={{ padding: '16px 20px', textAlign: 'center', fontWeight: '600' }}>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {paginatedPracticalResults.map((result, index) => {
-                const hasAttachment = String(result.HAS_PRACTICAL_ATTACHMENT) === '1' || result.HAS_PRACTICAL_ATTACHMENT === 1;
+        {practicalActiveTable === 'results' && (
+          <div style={{
+            backgroundColor: colors.cardBg,
+            borderRadius: '28px',
+            boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+            border: `1px solid ${theme.border.default}`,
+            overflow: 'hidden'
+          }}>
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr style={{ backgroundColor: colors.tableHeaderBg, color: '#fff' }}>
+                  <th style={{ padding: '16px 20px', textAlign: 'left', fontWeight: '600' }}>Employee ID</th>
+                  <th style={{ padding: '16px 20px', textAlign: 'left', fontWeight: '600' }}>Name</th>
+                  <th style={{ padding: '16px 20px', textAlign: 'left', fontWeight: '600' }}>Standard</th>
+                  <th style={{ padding: '16px 20px', textAlign: 'center', fontWeight: '600' }}>Percentage</th>
+                  <th style={{ padding: '16px 20px', textAlign: 'center', fontWeight: '600' }}>Status</th>
+                  <th style={{ padding: '16px 20px', textAlign: 'center', fontWeight: '600' }}>Date</th>
+                  <th style={{ padding: '16px 20px', textAlign: 'center', fontWeight: '600' }}>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {paginatedPracticalResults.map((result, index) => {
+                  const hasAttachment = String(result.HAS_PRACTICAL_ATTACHMENT) === '1' || result.HAS_PRACTICAL_ATTACHMENT === 1;
 
-                return (
-                  <tr key={index} style={{
-                    borderBottom: `1px solid ${colors.border}`,
-                    transition: 'background-color 0.2s',
-                    backgroundColor: isDarkMode ? colors.tableRowBg : 'transparent'
-                  }}>
-                    <td style={{ padding: '16px 20px', color: colors.text }}>{result.ID}</td>
-                    <td style={{ padding: '16px 20px', color: colors.text }}>{result.NAME}</td>
-                    <td style={{ padding: '16px 20px', color: colors.text }}>{result.STANDARD}</td>
-                    <td style={{ padding: '16px 20px', textAlign: 'center', fontWeight: 'bold', color: colors.text }}>
-                      {result.PERCENTAGE}
-                    </td>
-                    <td style={{ padding: '16px 20px', textAlign: 'center' }}>
-                      <span style={{
-                        padding: '6px 12px',
-                        borderRadius: '8px',
-                        fontSize: '0.85em',
-                        fontWeight: 'bold',
-                        backgroundColor: result.STATUS && result.STATUS.toUpperCase() === 'PASS' ? '#d4edda' : '#f8d7da',
-                        color: result.STATUS && result.STATUS.toUpperCase() === 'PASS' ? '#155724' : '#721c24'
-                      }}>
-                        {result.STATUS}
-                      </span>
-                    </td>
-                    <td style={{ padding: '16px 20px', textAlign: 'center', fontSize: '0.9em', color: colors.textMuted }}>
-                      {result.DATE}
-                    </td>
-                    <td style={{ padding: '16px 20px', textAlign: 'center' }}>
-                      <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
-                        <button
-                          onClick={() => downloadPracticalAttachment(result)}
-                          disabled={!hasAttachment}
-                          style={{
-                            padding: '8px',
-                            backgroundColor: hasAttachment ? '#1a1a2e' : '#95a5a6',
-                            color: 'white',
-                            border: hasAttachment ? '2px solid #1a1a2e' : '2px solid #95a5a6',
-                            borderRadius: '28px',
-                            cursor: hasAttachment ? 'pointer' : 'not-allowed',
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            transition: 'all 0.2s ease'
-                          }}
-                          title={hasAttachment ? 'Download Attachment' : 'No attachment available'}
-                          onMouseOver={(e) => {
-                            if (!hasAttachment) return;
-                            e.currentTarget.style.backgroundColor = '#e1e2e2ff';
-                            e.currentTarget.style.color = '#1a1a2e';
-                          }}
-                          onMouseOut={(e) => {
-                            e.currentTarget.style.backgroundColor = hasAttachment ? '#1a1a2e' : '#95a5a6';
-                            e.currentTarget.style.color = 'white';
-                          }}
-                        >
-                          <Download size={16} />
-                        </button>
-                        <button
-                          onClick={() => handleEdit(result)}
-                          style={{
-                            padding: '8px',
-                            backgroundColor: '#1a1a2e',
-                            color: 'white',
-                            border: '2px solid #1a1a2e',
-                            borderRadius: '28px',
-                            cursor: 'pointer',
-                            marginRight: '8px',
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            transition: 'all 0.2s ease'
-                          }}
-                          title="Edit Practical Result"
-                          onMouseOver={(e) => {
-                            e.currentTarget.style.backgroundColor = '#e1e2e2ff';
-                            e.currentTarget.style.color = '#1a1a2e';
-                          }}
-                          onMouseOut={(e) => {
-                            e.currentTarget.style.backgroundColor = '#1a1a2e';
-                            e.currentTarget.style.color = 'white';
-                          }}
-                        >
-                          <Edit2 size={16} />
-                        </button>
-                        <button
-                          onClick={() => handleDelete(result)}
-                          style={{
-                            padding: '8px',
-                            background: 'linear-gradient(120deg, #c0392b, #e74c3c)',
-                            color: 'white',
-                            border: '2px solid transparent',
-                            borderRadius: '28px',
-                            cursor: 'pointer',
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            transition: 'all 0.2s ease'
-                          }}
-                          title="Delete Practical Result"
-                          onMouseOver={(e) => {
-                            e.currentTarget.style.background = '#e1e2e2ff';
-                            e.currentTarget.style.border = '2px solid #c0392b';
-                            e.currentTarget.style.color = '#c0392b';
-                          }}
-                          onMouseOut={(e) => {
-                            e.currentTarget.style.background = 'linear-gradient(120deg, #c0392b, #e74c3c)';
-                            e.currentTarget.style.border = '2px solid transparent';
-                            e.currentTarget.style.color = 'white';
-                          }}
-                        >
-                          <Trash2 size={16} />
-                        </button>
-                      </div>
+                  return (
+                    <tr key={index} style={{
+                      borderBottom: `1px solid ${colors.border}`,
+                      transition: 'background-color 0.2s',
+                      backgroundColor: isDarkMode ? colors.tableRowBg : 'transparent'
+                    }}>
+                      <td style={{ padding: '16px 20px', color: colors.text }}>{result.ID}</td>
+                      <td style={{ padding: '16px 20px', color: colors.text }}>{result.NAME}</td>
+                      <td style={{ padding: '16px 20px', color: colors.text }}>{result.STANDARD}</td>
+                      <td style={{ padding: '16px 20px', textAlign: 'center', fontWeight: 'bold', color: colors.text }}>
+                        {result.PERCENTAGE}
+                      </td>
+                      <td style={{ padding: '16px 20px', textAlign: 'center' }}>
+                        <span style={{
+                          padding: '6px 12px',
+                          borderRadius: '8px',
+                          fontSize: '0.85em',
+                          fontWeight: 'bold',
+                          backgroundColor: result.STATUS && result.STATUS.toUpperCase() === 'PASS' ? '#d4edda' : '#f8d7da',
+                          color: result.STATUS && result.STATUS.toUpperCase() === 'PASS' ? '#155724' : '#721c24'
+                        }}>
+                          {result.STATUS}
+                        </span>
+                      </td>
+                      <td style={{ padding: '16px 20px', textAlign: 'center', fontSize: '0.9em', color: colors.textMuted }}>
+                        {result.DATE}
+                      </td>
+                      <td style={{ padding: '16px 20px', textAlign: 'center' }}>
+                        <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
+                          <button
+                            onClick={() => downloadPracticalAttachment(result)}
+                            disabled={!hasAttachment}
+                            style={{
+                              padding: '8px',
+                              backgroundColor: hasAttachment ? '#1a1a2e' : '#95a5a6',
+                              color: 'white',
+                              border: hasAttachment ? '2px solid #1a1a2e' : '2px solid #95a5a6',
+                              borderRadius: '28px',
+                              cursor: hasAttachment ? 'pointer' : 'not-allowed',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              transition: 'all 0.2s ease'
+                            }}
+                            title={hasAttachment ? 'Download Attachment' : 'No attachment available'}
+                            onMouseOver={(e) => {
+                              if (!hasAttachment) return;
+                              e.currentTarget.style.backgroundColor = '#e1e2e2ff';
+                              e.currentTarget.style.color = '#1a1a2e';
+                            }}
+                            onMouseOut={(e) => {
+                              e.currentTarget.style.backgroundColor = hasAttachment ? '#1a1a2e' : '#95a5a6';
+                              e.currentTarget.style.color = 'white';
+                            }}
+                          >
+                            <Download size={16} />
+                          </button>
+                          <button
+                            onClick={() => handleEdit(result)}
+                            style={{
+                              padding: '8px',
+                              backgroundColor: '#1a1a2e',
+                              color: 'white',
+                              border: '2px solid #1a1a2e',
+                              borderRadius: '28px',
+                              cursor: 'pointer',
+                              marginRight: '8px',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              transition: 'all 0.2s ease'
+                            }}
+                            title="Edit Practical Result"
+                            onMouseOver={(e) => {
+                              e.currentTarget.style.backgroundColor = '#e1e2e2ff';
+                              e.currentTarget.style.color = '#1a1a2e';
+                            }}
+                            onMouseOut={(e) => {
+                              e.currentTarget.style.backgroundColor = '#1a1a2e';
+                              e.currentTarget.style.color = 'white';
+                            }}
+                          >
+                            <Edit2 size={16} />
+                          </button>
+                          <button
+                            onClick={() => handleDelete(result)}
+                            style={{
+                              padding: '8px',
+                              background: 'linear-gradient(120deg, #c0392b, #e74c3c)',
+                              color: 'white',
+                              border: '2px solid transparent',
+                              borderRadius: '28px',
+                              cursor: 'pointer',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              transition: 'all 0.2s ease'
+                            }}
+                            title="Delete Practical Result"
+                            onMouseOver={(e) => {
+                              e.currentTarget.style.background = '#e1e2e2ff';
+                              e.currentTarget.style.border = '2px solid #c0392b';
+                              e.currentTarget.style.color = '#c0392b';
+                            }}
+                            onMouseOut={(e) => {
+                              e.currentTarget.style.background = 'linear-gradient(120deg, #c0392b, #e74c3c)';
+                              e.currentTarget.style.border = '2px solid transparent';
+                              e.currentTarget.style.color = 'white';
+                            }}
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+                {practicalResults.length === 0 && (
+                  <tr>
+                    <td colSpan="7" style={{ padding: '40px', textAlign: 'center', color: colors.textMuted }}>
+                      No practical results found. Click "Add Practical Result" to add one.
                     </td>
                   </tr>
-                );
-              })}
-              {practicalResults.length === 0 && (
-                <tr>
-                  <td colSpan="7" style={{ padding: '40px', textAlign: 'center', color: colors.textMuted }}>
-                    No practical results found. Click "Add Practical Result" to add one.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-            </table>
-          </div>
+                )}
+              </tbody>
+              </table>
+            </div>
 
-          {totalPracticalPages > 1 && (
-            <div style={{
-              display: 'flex',
-              justifyContent: 'center',
-              alignItems: 'center',
-              gap: '10px',
-              flexWrap: 'wrap',
-              padding: '14px 16px',
-              backgroundColor: colors.cardBg,
-              borderTop: `1px solid ${colors.border}`
-            }}>
-              <button
-                onClick={() => setPracticalCurrentPage(prev => Math.max(1, prev - 1))}
-                disabled={practicalCurrentPage === 1}
-                style={{
-                  padding: '8px 16px',
-                  backgroundColor: practicalCurrentPage === 1 ? colors.border : '#1a1a2e',
-                  color: practicalCurrentPage === 1 ? colors.textMuted : 'white',
-                  border: 'none',
-                  borderRadius: '8px',
-                  cursor: practicalCurrentPage === 1 ? 'not-allowed' : 'pointer',
-                  fontWeight: '600',
-                  fontSize: '14px',
-                  transition: 'all 0.2s ease'
-                }}
-              >
-                Previous
-              </button>
-
-              <span style={{
-                color: colors.text,
-                fontWeight: '600',
-                fontSize: '14px',
-                padding: '0 10px'
+            {totalPracticalPages > 1 && (
+              <div style={{
+                display: 'flex',
+                justifyContent: 'center',
+                alignItems: 'center',
+                gap: '10px',
+                flexWrap: 'wrap',
+                padding: '14px 16px',
+                backgroundColor: colors.cardBg,
+                borderTop: `1px solid ${colors.border}`
               }}>
-                Page {practicalCurrentPage} of {totalPracticalPages} ({practicalResults.length} results)
-              </span>
-
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <span style={{ color: colors.textMuted, fontWeight: '600', fontSize: '12px' }}>Go to</span>
-                <input
-                  type="number"
-                  min="1"
-                  max={totalPracticalPages}
-                  value={practicalGoToPage}
-                  onChange={(e) => setPracticalGoToPage(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key !== 'Enter') return;
-                    const nextPage = parseInt(practicalGoToPage, 10);
-                    if (!Number.isFinite(nextPage)) return;
-                    setPracticalCurrentPage(Math.min(totalPracticalPages, Math.max(1, nextPage)));
-                    setPracticalGoToPage('');
-                  }}
-                  style={{
-                    width: '70px',
-                    padding: '6px 10px',
-                    border: `1px solid ${colors.border}`,
-                    borderRadius: '8px',
-                    fontSize: '14px',
-                    textAlign: 'center',
-                    backgroundColor: colors.cardAltBg,
-                    color: colors.text
-                  }}
-                />
                 <button
-                  onClick={() => {
-                    const nextPage = parseInt(practicalGoToPage, 10);
-                    if (!Number.isFinite(nextPage)) return;
-                    setPracticalCurrentPage(Math.min(totalPracticalPages, Math.max(1, nextPage)));
-                    setPracticalGoToPage('');
-                  }}
+                  onClick={() => setPracticalCurrentPage(prev => Math.max(1, prev - 1))}
+                  disabled={practicalCurrentPage === 1}
                   style={{
-                    padding: '6px 12px',
-                    backgroundColor: '#1a1a2e',
-                    color: 'white',
+                    padding: '8px 16px',
+                    backgroundColor: practicalCurrentPage === 1 ? colors.border : '#1a1a2e',
+                    color: practicalCurrentPage === 1 ? colors.textMuted : 'white',
                     border: 'none',
                     borderRadius: '8px',
-                    cursor: 'pointer',
+                    cursor: practicalCurrentPage === 1 ? 'not-allowed' : 'pointer',
                     fontWeight: '600',
-                    fontSize: '13px'
+                    fontSize: '14px',
+                    transition: 'all 0.2s ease'
                   }}
                 >
-                  Go
+                  Previous
                 </button>
-              </div>
 
-              <button
-                onClick={() => setPracticalCurrentPage(prev => Math.min(totalPracticalPages, prev + 1))}
-                disabled={practicalCurrentPage === totalPracticalPages}
-                style={{
-                  padding: '8px 16px',
-                  backgroundColor: practicalCurrentPage === totalPracticalPages ? colors.border : '#1a1a2e',
-                  color: practicalCurrentPage === totalPracticalPages ? colors.textMuted : 'white',
-                  border: 'none',
-                  borderRadius: '8px',
-                  cursor: practicalCurrentPage === totalPracticalPages ? 'not-allowed' : 'pointer',
+                <span style={{
+                  color: colors.text,
                   fontWeight: '600',
                   fontSize: '14px',
-                  transition: 'all 0.2s ease'
-                }}
-              >
-                Next
-              </button>
-            </div>
-          )}
-        </div>
+                  padding: '0 10px'
+                }}>
+                  Page {practicalCurrentPage} of {totalPracticalPages} ({practicalResults.length} results)
+                </span>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <span style={{ color: colors.textMuted, fontWeight: '600', fontSize: '12px' }}>Go to</span>
+                  <input
+                    type="number"
+                    min="1"
+                    max={totalPracticalPages}
+                    value={practicalGoToPage}
+                    onChange={(e) => setPracticalGoToPage(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key !== 'Enter') return;
+                      const nextPage = parseInt(practicalGoToPage, 10);
+                      if (!Number.isFinite(nextPage)) return;
+                      setPracticalCurrentPage(Math.min(totalPracticalPages, Math.max(1, nextPage)));
+                      setPracticalGoToPage('');
+                    }}
+                    style={{
+                      width: '70px',
+                      padding: '6px 10px',
+                      border: `1px solid ${colors.border}`,
+                      borderRadius: '8px',
+                      fontSize: '14px',
+                      textAlign: 'center',
+                      backgroundColor: colors.cardAltBg,
+                      color: colors.text
+                    }}
+                  />
+                  <button
+                    onClick={() => {
+                      const nextPage = parseInt(practicalGoToPage, 10);
+                      if (!Number.isFinite(nextPage)) return;
+                      setPracticalCurrentPage(Math.min(totalPracticalPages, Math.max(1, nextPage)));
+                      setPracticalGoToPage('');
+                    }}
+                    style={{
+                      padding: '6px 12px',
+                      backgroundColor: '#1a1a2e',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '8px',
+                      cursor: 'pointer',
+                      fontWeight: '600',
+                      fontSize: '13px'
+                    }}
+                  >
+                    Go
+                  </button>
+                </div>
+
+                <button
+                  onClick={() => setPracticalCurrentPage(prev => Math.min(totalPracticalPages, prev + 1))}
+                  disabled={practicalCurrentPage === totalPracticalPages}
+                  style={{
+                    padding: '8px 16px',
+                    backgroundColor: practicalCurrentPage === totalPracticalPages ? colors.border : '#1a1a2e',
+                    color: practicalCurrentPage === totalPracticalPages ? colors.textMuted : 'white',
+                    border: 'none',
+                    borderRadius: '8px',
+                    cursor: practicalCurrentPage === totalPracticalPages ? 'not-allowed' : 'pointer',
+                    fontWeight: '600',
+                    fontSize: '14px',
+                    transition: 'all 0.2s ease'
+                  }}
+                >
+                  Next
+                </button>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Add Practical Result Modal */}
         {showModal && (
@@ -6807,8 +7076,55 @@ const TestingModule = () => {
               maxHeight: '90vh',
               overflowY: 'auto',
               boxShadow: `0 20px 60px ${isDarkMode ? 'rgba(0,0,0,0.5)' : 'rgba(0, 0, 0, 0.3)'}`,
-              animation: 'fadeIn 0.2s ease'
+              animation: 'fadeIn 0.2s ease',
+              position: 'relative'
             }}>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowModal(false);
+                  setEditMode(false);
+                  setCurrentResult(null);
+                  setIsPracticalPercentageManuallyEdited(false);
+                  setAvailableStandards([]);
+                  setFormData({ employeeId: '', employeeName: '', standard: '', standardFullName: '', totalQuestions: '100', correctAnswers: '', percentage: '', passingCriteria: '75' });
+                  resetAttachment();
+                }}
+                aria-label="Close"
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = '#c0392b';
+                  e.currentTarget.style.color = '#fff';
+                  e.currentTarget.style.borderColor = '#c0392b';
+                  e.currentTarget.style.boxShadow = '0 6px 16px rgba(192, 57, 43, 0.35)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = colors.cardAltBg;
+                  e.currentTarget.style.color = colors.text;
+                  e.currentTarget.style.borderColor = colors.inputBorder;
+                  e.currentTarget.style.boxShadow = 'none';
+                }}
+                style={{
+                  position: 'absolute',
+                  top: '12px',
+                  right: '12px',
+                  width: '34px',
+                  height: '34px',
+                  borderRadius: '50%',
+                  border: `1px solid ${colors.inputBorder}`,
+                  backgroundColor: colors.cardAltBg,
+                  color: colors.text,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  cursor: 'pointer',
+                  fontSize: '16px',
+                  fontWeight: 700,
+                  lineHeight: 1,
+                  transition: 'all 0.2s ease'
+                }}
+              >
+                X
+              </button>
               <h3 style={{ 
                 marginTop: 0, 
                 marginBottom: '25px',
@@ -6837,11 +7153,14 @@ const TestingModule = () => {
                       value={formData.employeeId}
                       onChange={(e) => {
                         const selectedId = e.target.value;
-                        const selectedEmp = eligibleEmployees.find(emp => String(emp.empId) === String(selectedId));
-                        setFormData({ 
-                          ...formData, 
+                        const empEntries = eligibleEmployees.filter(emp => String(emp.empId) === String(selectedId));
+                        const pending = empEntries.filter(emp => !emp.practical).map(emp => `${emp.baseType} (Practical)`);
+                        setAvailableStandards(pending);
+                        setFormData({
+                          ...formData,
                           employeeId: selectedId,
-                          employeeName: selectedEmp ? selectedEmp.empName : ''
+                          employeeName: empEntries[0]?.empName || '',
+                          standard: pending.length === 1 ? pending[0] : ''
                         });
                       }}
                       required
@@ -6885,11 +7204,14 @@ const TestingModule = () => {
                       value={formData.employeeName || ''}
                       onChange={(e) => {
                         const selectedName = e.target.value;
-                        const selectedEmp = eligibleEmployees.find(emp => emp.empName === selectedName);
-                        setFormData({ 
-                          ...formData, 
+                        const empEntries = eligibleEmployees.filter(emp => emp.empName === selectedName);
+                        const pending = empEntries.filter(emp => !emp.practical).map(emp => `${emp.baseType} (Practical)`);
+                        setAvailableStandards(pending);
+                        setFormData({
+                          ...formData,
                           employeeName: selectedName,
-                          employeeId: selectedEmp ? selectedEmp.empId : ''
+                          employeeId: empEntries[0]?.empId || '',
+                          standard: pending.length === 1 ? pending[0] : ''
                         });
                       }}
                       required
@@ -6954,7 +7276,7 @@ const TestingModule = () => {
                     onBlur={e => !editMode && (e.target.style.borderColor = colors.inputBorder)}
                   >
                     <option value="">Select Standard</option>
-                    {practicalStandards.map(stdName => (
+                    {(formData.employeeId ? availableStandards : practicalStandards).map(stdName => (
                       <option key={stdName} value={stdName}>
                         {stdName}
                       </option>
@@ -7811,8 +8133,51 @@ const TestingModule = () => {
               maxHeight: '90vh',
               overflowY: 'auto',
               boxShadow: `0 20px 60px ${isDarkMode ? 'rgba(0,0,0,0.5)' : 'rgba(0, 0, 0, 0.3)'}`,
-              animation: 'fadeIn 0.2s ease'
+              animation: 'fadeIn 0.2s ease',
+              position: 'relative'
             }}>
+              <button
+                type="button"
+                onClick={() => setShowModal(false)}
+                aria-label="Close"
+                disabled={saving}
+                onMouseEnter={(e) => {
+                  if (saving) return;
+                  e.currentTarget.style.backgroundColor = '#c0392b';
+                  e.currentTarget.style.color = '#fff';
+                  e.currentTarget.style.borderColor = '#c0392b';
+                  e.currentTarget.style.boxShadow = '0 6px 16px rgba(192, 57, 43, 0.35)';
+                }}
+                onMouseLeave={(e) => {
+                  if (saving) return;
+                  e.currentTarget.style.backgroundColor = colors.cardAltBg;
+                  e.currentTarget.style.color = colors.text;
+                  e.currentTarget.style.borderColor = colors.inputBorder;
+                  e.currentTarget.style.boxShadow = 'none';
+                }}
+                style={{
+                  position: 'absolute',
+                  top: '12px',
+                  right: '12px',
+                  width: '34px',
+                  height: '34px',
+                  borderRadius: '50%',
+                  border: `1px solid ${colors.inputBorder}`,
+                  backgroundColor: colors.cardAltBg,
+                  color: colors.text,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  cursor: saving ? 'not-allowed' : 'pointer',
+                  fontSize: '16px',
+                  fontWeight: 700,
+                  lineHeight: 1,
+                  transition: 'all 0.2s ease',
+                  opacity: saving ? 0.6 : 1
+                }}
+              >
+                X
+              </button>
               <h3 style={{ 
                 marginTop: 0, 
                 marginBottom: '25px',

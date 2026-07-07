@@ -214,12 +214,14 @@ async function generateCertificate({
   standard,
   percentage,
   passing_criteria,
-  // For 2-row certificates (PT/MPT)
+  // For 2-row certificates (PT/MPT General+Specific)
   is_combined = false,
   general_data = null,
   specific_data = null,
-  // For 3-row certificates (PT/MPT with Practical)
+  // For 3-row combined OR 2-row single+practical
   practical_data = null,
+  // For single-standard + practical (double-row, uses single template)
+  has_practical = false,
   // Certification type
   certification_type = 'New',
   previous_certificate_no = null,
@@ -237,12 +239,15 @@ async function generateCertificate({
       const lowered = String(value || '').toLowerCase();
       return lowered.includes('general') || lowered.includes('specific') || lowered.includes('practical');
     };
+    // has_practical uses the single-row template — don't redirect it to the MPT/combined template
     const useGeneralSpecificTemplate =
-      (is_combined && general_data && specific_data) ||
-      hasGeneralSpecificTag(standard) ||
-      hasGeneralSpecificTag(general_data && general_data.standard) ||
-      hasGeneralSpecificTag(specific_data && specific_data.standard) ||
-      hasGeneralSpecificTag(practical_data && practical_data.standard);
+      !has_practical && (
+        (is_combined && general_data && specific_data) ||
+        hasGeneralSpecificTag(standard) ||
+        hasGeneralSpecificTag(general_data && general_data.standard) ||
+        hasGeneralSpecificTag(specific_data && specific_data.standard) ||
+        hasGeneralSpecificTag(practical_data && practical_data.standard)
+      );
     const useDefaultTemplate = !certificate_template && !useGeneralSpecificTemplate;
     const useCustomTemplate = !!certificate_template;
 
@@ -360,6 +365,16 @@ async function generateCertificate({
     }
     const nameX = (width - nameWidth) / 2;
     const nameY = height * 0.70; // Slightly higher to create gap with "For"
+
+    const formatExamStandardLabel = (value) => {
+      const raw = String(value || '').trim();
+      if (!raw) return '';
+      const lower = raw.toLowerCase();
+      if (lower.includes('general')) return 'General Theory';
+      if (lower.includes('specific')) return 'Specific Theory';
+      if (lower.includes('practical')) return 'Practical';
+      return raw;
+    };
     
     firstPage.drawText(displayName, {
       x: nameX,
@@ -369,21 +384,24 @@ async function generateCertificate({
       color: rgb(0, 0, 0)
     });
     
-    // Check if this is a 2-row or 3-row certificate (PT/MPT with General + Specific + optional Practical)
     if (is_combined && general_data && specific_data) {
-      // Column center positions
-      const col1Center = 182;
-      const col2Center = 412;
-      const col3Center = 650;
-      
+      // ─────────────────────────────────────────────────────────────────
+      // 3-ROW layout  (PT/MPT: General + Specific + optional Practical)
+      // Adjust ONLY these constants — does NOT affect 2-row single below
+      // ─────────────────────────────────────────────────────────────────
+      const col1Center = 182;   // Column 1: Standard label  (x center)
+      const col2Center = 412;   // Column 2: Score %          (x center)
+      const col3Center = 650;   // Column 3: Passing criteria (x center)
+      // ─────────────────────────────────────────────────────────────────
+
       if (practical_data) {
         // 3-row table (General + Specific + Practical)
-        const tableY1 = height * 0.38 + 6; // First row (General)
-        const tableY2 = height * 0.38 - 9; // Second row (Specific)
-        const tableY3 = height * 0.38 - 24;  // Third row (Practical)
+        const tableY1 = height * 0.38 + 6;  // Row 1: General   — increase to move UP
+        const tableY2 = height * 0.38 - 9;  // Row 2: Specific
+        const tableY3 = height * 0.38 - 24; // Row 3: Practical  — decrease to move DOWN
         
         // Row 1 - General
-        const gen_standardText = general_data.standard;
+        const gen_standardText = formatExamStandardLabel(general_data.standard);
         const gen_standardWidth = certificateTableFont.widthOfTextAtSize(gen_standardText, 11);
         firstPage.drawText(gen_standardText, {
           x: col1Center - (gen_standardWidth / 2),
@@ -418,7 +436,7 @@ async function generateCertificate({
         }
         
         // Row 2 - Specific
-        const spec_standardText = specific_data.standard;
+        const spec_standardText = formatExamStandardLabel(specific_data.standard);
         const spec_standardWidth = certificateTableFont.widthOfTextAtSize(spec_standardText, 11);
         firstPage.drawText(spec_standardText, {
           x: col1Center - (spec_standardWidth / 2),
@@ -453,7 +471,7 @@ async function generateCertificate({
         }
         
         // Row 3 - Practical
-        const prac_standardText = practical_data.standard;
+        const prac_standardText = formatExamStandardLabel(practical_data.standard);
         const prac_standardWidth = certificateTableFont.widthOfTextAtSize(prac_standardText, 11);
         firstPage.drawText(prac_standardText, {
           x: col1Center - (prac_standardWidth / 2),
@@ -564,13 +582,94 @@ async function generateCertificate({
         }
       }
       */
+    } else if (has_practical && practical_data) {
+      // ─────────────────────────────────────────────────────────────────
+      // DOUBLE-ROW layout  (single standard + practical)
+      // Adjust ONLY these constants — does NOT affect 3-row combined above
+      // ─────────────────────────────────────────────────────────────────
+      const col1Center = 184;   // Column 1: Standard label  (x center)
+      const col2Center = 412;   // Column 2: Score %          (x center)
+      const col3Center = 650;   // Column 3: Passing criteria (x center)
+      const tableY1 = height * 0.38 + 58; // Theory row    — increase to move UP
+      const tableY2 = height * 0.38 + 42; // Practical row — decrease to move DOWN
+      // ─────────────────────────────────────────────────────────────────
+
+      // Row 1 — Theory
+      const theoryText = 'Theory';
+      const theoryWidth = certificateTableFont.widthOfTextAtSize(theoryText, 11);
+      firstPage.drawText(theoryText, {
+        x: col1Center - (theoryWidth / 2),
+        y: tableY1,
+        size: 11,
+        font: certificateTableFont,
+        color: rgb(0, 0, 0)
+      });
+
+      if (percentage && !isNaN(percentage)) {
+        const pctText = `${percentage}%`;
+        const pctWidth = certificateTableFont.widthOfTextAtSize(pctText, 11);
+        firstPage.drawText(pctText, {
+          x: col2Center - (pctWidth / 2),
+          y: tableY1,
+          size: 11,
+          font: certificateTableFont,
+          color: rgb(0, 0, 0)
+        });
+      }
+
+      if (passing_criteria && !isNaN(passing_criteria)) {
+        const critText = `${passing_criteria}%`;
+        const critWidth = certificateTableFont.widthOfTextAtSize(critText, 11);
+        firstPage.drawText(critText, {
+          x: col3Center - (critWidth / 2),
+          y: tableY1,
+          size: 11,
+          font: certificateTableFont,
+          color: rgb(0, 0, 0)
+        });
+      }
+
+      // Row 2 — Practical
+      const practicalLabel = formatExamStandardLabel(practical_data.standard);
+      const practicalLabelWidth = certificateTableFont.widthOfTextAtSize(practicalLabel, 11);
+      firstPage.drawText(practicalLabel, {
+        x: col1Center - (practicalLabelWidth / 2),
+        y: tableY2,
+        size: 11,
+        font: certificateTableFont,
+        color: rgb(0, 0, 0)
+      });
+
+      if (practical_data.percentage && !isNaN(practical_data.percentage)) {
+        const pPctText = `${practical_data.percentage}%`;
+        const pPctWidth = certificateTableFont.widthOfTextAtSize(pPctText, 11);
+        firstPage.drawText(pPctText, {
+          x: col2Center - (pPctWidth / 2),
+          y: tableY2,
+          size: 11,
+          font: certificateTableFont,
+          color: rgb(0, 0, 0)
+        });
+      }
+
+      if (practical_data.passing_criteria && !isNaN(practical_data.passing_criteria)) {
+        const pCritText = `${practical_data.passing_criteria}%`;
+        const pCritWidth = certificateTableFont.widthOfTextAtSize(pCritText, 11);
+        firstPage.drawText(pCritText, {
+          x: col3Center - (pCritWidth / 2),
+          y: tableY2,
+          size: 11,
+          font: certificateTableFont,
+          color: rgb(0, 0, 0)
+        });
+      }
     } else {
       // Single row table (existing logic) - keep at original position
       const tableY = height * 0.38 + 57;
-      const col1Center = 173;
+      const col1Center = 177;
       const col2Center = 412;
       const col3Center = 650;
-      
+
       const standardText = standard;
       const standardWidth = certificateTableFont.widthOfTextAtSize(standardText, 9);
       firstPage.drawText(standardText, {
@@ -580,7 +679,7 @@ async function generateCertificate({
         font: certificateTableFont,
         color: rgb(0, 0, 0)
       });
-      
+
       if (percentage && !isNaN(percentage)) {
         const achievedText = `${percentage}%`;
         const achievedWidth = certificateTableFont.widthOfTextAtSize(achievedText, 9);
@@ -592,7 +691,7 @@ async function generateCertificate({
           color: rgb(0, 0, 0)
         });
       }
-      
+
       if (passing_criteria && !isNaN(passing_criteria)) {
         const criteriaText = `${passing_criteria}%`;
         const criteriaWidth = certificateTableFont.widthOfTextAtSize(criteriaText, 9);

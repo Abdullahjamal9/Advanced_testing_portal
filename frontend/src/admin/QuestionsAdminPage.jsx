@@ -1279,8 +1279,47 @@ overflow: 'hidden',
             maxHeight: '90vh',
             overflowY: 'auto',
             boxShadow: '0 20px 60px rgba(0, 0, 0, 0.3)',
-            animation: 'fadeIn 0.2s ease'
+            animation: 'fadeIn 0.2s ease',
+            position: 'relative'
           }}>
+            <button
+              type="button"
+              onClick={() => setShowModal(false)}
+              aria-label="Close"
+              onMouseEnter={(e) => {
+                e.currentTarget.style.backgroundColor = '#c0392b';
+                e.currentTarget.style.color = '#fff';
+                e.currentTarget.style.borderColor = '#c0392b';
+                e.currentTarget.style.boxShadow = '0 6px 16px rgba(192, 57, 43, 0.35)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.backgroundColor = colors.cardAltBg;
+                e.currentTarget.style.color = colors.text;
+                e.currentTarget.style.borderColor = colors.inputBorder;
+                e.currentTarget.style.boxShadow = 'none';
+              }}
+              style={{
+                position: 'absolute',
+                top: '12px',
+                right: '12px',
+                width: '34px',
+                height: '34px',
+                borderRadius: '50%',
+                border: `1px solid ${colors.inputBorder}`,
+                backgroundColor: colors.cardAltBg,
+                color: colors.text,
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                cursor: 'pointer',
+                fontSize: '16px',
+                fontWeight: 700,
+                lineHeight: 1,
+                transition: 'all 0.2s ease'
+              }}
+            >
+              X
+            </button>
             <h3 style={{ 
               marginTop: 0, 
               marginBottom: '25px',
@@ -1620,6 +1659,50 @@ overflow: 'hidden',
             position: 'relative',
             border: `2px solid ${colors.border}`
           }}>
+            <button
+              type="button"
+              onClick={() => {
+                setShowExcelUploadModal(false);
+                setExcelData(null);
+                setExcelFile(null);
+                setUploadSummary(null);
+                setUploadErrors([]);
+              }}
+              aria-label="Close"
+              onMouseEnter={(e) => {
+                e.currentTarget.style.backgroundColor = '#c0392b';
+                e.currentTarget.style.color = '#fff';
+                e.currentTarget.style.borderColor = '#c0392b';
+                e.currentTarget.style.boxShadow = '0 6px 16px rgba(192, 57, 43, 0.35)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.backgroundColor = colors.cardAltBg;
+                e.currentTarget.style.color = colors.text;
+                e.currentTarget.style.borderColor = colors.inputBorder;
+                e.currentTarget.style.boxShadow = 'none';
+              }}
+              style={{
+                position: 'absolute',
+                top: '12px',
+                right: '12px',
+                width: '34px',
+                height: '34px',
+                borderRadius: '50%',
+                border: `1px solid ${colors.inputBorder}`,
+                backgroundColor: colors.cardAltBg,
+                color: colors.text,
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                cursor: 'pointer',
+                fontSize: '16px',
+                fontWeight: 700,
+                lineHeight: 1,
+                transition: 'all 0.2s ease'
+              }}
+            >
+              X
+            </button>
             <h2 style={{
               margin: '0 0 24px 0',
               color: colors.text,
@@ -1789,71 +1872,112 @@ overflow: 'hidden',
               justifyContent: 'flex-end',
               flexWrap: 'wrap'
             }}>
-              <button
-                type="button"
-                onClick={() => {
-                  setShowExcelUploadModal(false);
-                  setExcelData(null);
-                  setExcelFile(null);
-                  setUploadSummary(null);
-                  setUploadErrors([]);
-                }}
-                style={{
-                  padding: '12px 28px',
-                  backgroundColor: colors.inputBg,
-                  color: colors.textMuted,
-                  border: `2px solid ${colors.inputBorder}`,
-                  borderRadius: '28px',
-                  cursor: 'pointer',
-                  fontSize: '15px',
-                  fontWeight: '600',
-                  width: isMobile ? '100%' : 'auto',
-                  transition: 'all 0.2s ease'
-                }}
-                onMouseOver={e => {
-                  e.currentTarget.style.borderColor = '#95a5a6';
-                  e.currentTarget.style.color = colors.text;
-                }}
-                onMouseOut={e => {
-                  e.currentTarget.style.borderColor = colors.inputBorder;
-                  e.currentTarget.style.color = colors.textMuted;
-                }}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleBulkUpload}
-                style={{
-                  padding: '12px 32px',
-                  backgroundColor: '#27ae60',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '28px',
-                  cursor: 'pointer',
-                  fontSize: '15px',
-                  fontWeight: '600',
-                  width: isMobile ? '100%' : 'auto',
-                  transition: 'all 0.2s ease',
-                  boxShadow: '0 4px 12px rgba(39, 174, 96, 0.3)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '8px'
-                }}
-                onMouseOver={e => {
-                  e.currentTarget.style.transform = 'translateY(-2px)';
-                  e.currentTarget.style.boxShadow = '0 6px 16px rgba(39, 174, 96, 0.4)';
-                  e.currentTarget.style.backgroundColor = '#229954';
-                }}
-                onMouseOut={e => {
-                  e.currentTarget.style.transform = 'translateY(0)';
-                  e.currentTarget.style.boxShadow = '0 4px 12px rgba(39, 174, 96, 0.3)';
-                  e.currentTarget.style.backgroundColor = '#27ae60';
-                }}
-              >
-                <Upload size={18} />
-                Upload {excelData.length} Questions
-              </button>
+              {uploadSummary ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowExcelUploadModal(false);
+                    setExcelData(null);
+                    setExcelFile(null);
+                    if (fileInputRef.current) fileInputRef.current.value = '';
+                    setUploadSummary(null);
+                    setUploadErrors([]);
+                  }}
+                  style={{
+                    padding: '12px 32px',
+                    backgroundColor: '#27ae60',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '28px',
+                    cursor: 'pointer',
+                    fontSize: '15px',
+                    fontWeight: '600',
+                    width: isMobile ? '100%' : 'auto',
+                    transition: 'all 0.2s ease',
+                    boxShadow: '0 4px 12px rgba(39, 174, 96, 0.3)'
+                  }}
+                  onMouseOver={e => {
+                    e.currentTarget.style.transform = 'translateY(-2px)';
+                    e.currentTarget.style.boxShadow = '0 6px 16px rgba(39, 174, 96, 0.4)';
+                    e.currentTarget.style.backgroundColor = '#229954';
+                  }}
+                  onMouseOut={e => {
+                    e.currentTarget.style.transform = 'translateY(0)';
+                    e.currentTarget.style.boxShadow = '0 4px 12px rgba(39, 174, 96, 0.3)';
+                    e.currentTarget.style.backgroundColor = '#27ae60';
+                  }}
+                >
+                  Done
+                </button>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowExcelUploadModal(false);
+                      setExcelData(null);
+                      setExcelFile(null);
+                      setUploadSummary(null);
+                      setUploadErrors([]);
+                    }}
+                    style={{
+                      padding: '12px 28px',
+                      backgroundColor: colors.inputBg,
+                      color: colors.textMuted,
+                      border: `2px solid ${colors.inputBorder}`,
+                      borderRadius: '28px',
+                      cursor: 'pointer',
+                      fontSize: '15px',
+                      fontWeight: '600',
+                      width: isMobile ? '100%' : 'auto',
+                      transition: 'all 0.2s ease'
+                    }}
+                    onMouseOver={e => {
+                      e.currentTarget.style.borderColor = '#95a5a6';
+                      e.currentTarget.style.color = colors.text;
+                    }}
+                    onMouseOut={e => {
+                      e.currentTarget.style.borderColor = colors.inputBorder;
+                      e.currentTarget.style.color = colors.textMuted;
+                    }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleBulkUpload}
+                    style={{
+                      padding: '12px 32px',
+                      backgroundColor: '#27ae60',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '28px',
+                      cursor: 'pointer',
+                      fontSize: '15px',
+                      fontWeight: '600',
+                      width: isMobile ? '100%' : 'auto',
+                      transition: 'all 0.2s ease',
+                      boxShadow: '0 4px 12px rgba(39, 174, 96, 0.3)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px'
+                    }}
+                    onMouseOver={e => {
+                      e.currentTarget.style.transform = 'translateY(-2px)';
+                      e.currentTarget.style.boxShadow = '0 6px 16px rgba(39, 174, 96, 0.4)';
+                      e.currentTarget.style.backgroundColor = '#229954';
+                    }}
+                    onMouseOut={e => {
+                      e.currentTarget.style.transform = 'translateY(0)';
+                      e.currentTarget.style.boxShadow = '0 4px 12px rgba(39, 174, 96, 0.3)';
+                      e.currentTarget.style.backgroundColor = '#27ae60';
+                    }}
+                  >
+                    <Upload size={18} />
+                    Upload {excelData.length} Questions
+                  </button>
+                </>
+              )}
             </div>
           </div>
         </div>
