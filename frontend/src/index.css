@@ -1,10 +1,34 @@
+/* Montserrat, matching the ERP portal. The ERP ships a single static
+ * Medium face, so every heavier weight there is faux-bolded by the browser;
+ * this uses the variable font instead - one smaller file that carries real
+ * 400/500/600/700/800 cuts, which is what the UI actually asks for.
+ * Licensed under the SIL Open Font License (see assets/Montserrat/OFL.txt).
+ */
+@font-face {
+  font-family: 'Montserrat';
+  src: url('./assets/Montserrat/Montserrat-VariableFont_wght.ttf') format('truetype');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
 body {
   margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+  font-family: 'Montserrat', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
     'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
     sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+/* Form controls don't inherit the page font on their own, so without this
+ * every input/select/button would stay on the browser default while the
+ * rest of the UI switched to Montserrat. */
+input,
+select,
+textarea,
+button {
+  font-family: inherit;
 }
 
 html,
