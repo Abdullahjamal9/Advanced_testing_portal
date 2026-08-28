@@ -98,6 +98,41 @@ const templateUpload = multer({
   }
 });
 
+// Passport-size photo upload for certificate generation - kept in memory,
+// used once to embed into the PDF, never persisted to disk.
+const photoUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const ok = String(file.mimetype || '').startsWith('image/');
+    cb(ok ? null : new Error('Only image files are allowed for the photo'), ok);
+  }
+});
+
+// Parse a field that may arrive as a JSON string (multipart/form-data) or
+// already as an object (JSON body) — nested cert fields sent via FormData
+// are JSON.stringify'd on the client since multipart only carries strings.
+const parseJsonField = (value) => {
+  if (!value || typeof value === 'object') return value || null;
+  try {
+    return JSON.parse(value);
+  } catch (e) {
+    return null;
+  }
+};
+
+// Strip the General/Specific/Practical qualifier from a standard name and
+// normalize separators + case, so the same standard matches regardless of
+// hyphen vs space (e.g. theory "DS-1" and practical "DS 1 (Practical)").
+const canonicalBase = (value) =>
+  String(value || '')
+    .replace(/\(\s*(general|specific|practical)\s*\)/ig, '')
+    .replace(/\s+(general|specific|practical)\b/ig, '')
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+
 const resolveAttachmentPath = (relativePath) => {
   if (!relativePath) return null;
   const absolutePath = path.resolve(__dirname, relativePath);
@@ -1553,7 +1588,7 @@ app.get('/api/certificates/previous-number', async (req, res) => {
   }
 });
 
-app.post('/api/certificates/generate', async (req, res) => {
+app.post('/api/certificates/generate', photoUpload.single('photo'), async (req, res) => {
   const {
     emp_id,
     emp_name,
@@ -1562,15 +1597,17 @@ app.post('/api/certificates/generate', async (req, res) => {
     standard,
     percentage,
     passing_criteria,
-    is_combined,
-    has_practical,
-    general_data,
-    specific_data,
-    practical_data,
     certification_type,
     previous_certificate_no
   } = req.body;
-  
+
+  // Sent via FormData when a photo is attached, so these arrive as strings.
+  const is_combined = req.body.is_combined === true || req.body.is_combined === 'true';
+  const general_data = parseJsonField(req.body.general_data);
+  const specific_data = parseJsonField(req.body.specific_data);
+  const practical_data = parseJsonField(req.body.practical_data);
+  const vision_data = parseJsonField(req.body.vision_data);
+
   if (!emp_id || !emp_name || !test_date || !standard) {
     return res.status(400).json({ error: 'Missing required fields' });
   }
@@ -1613,6 +1650,22 @@ app.post('/api/certificates/generate', async (req, res) => {
       console.warn('Failed to fetch certificate template from DB:', dbErr);
     }
 
+    // Is the practical checklist still enabled for this single standard?
+    // This is the authoritative gate: if the checklist was removed, we ignore
+    // any practical_data and issue a plain single-row certificate.
+    let practicalRequired = false;
+    if (!is_combined) {
+      try {
+        const [stdRows] = await pool.query(
+          'SELECT Has_Practical FROM standard WHERE Standard_List = ?',
+          [normalizedStandard]
+        );
+        practicalRequired = !!(stdRows && stdRows.length > 0 && Number(stdRows[0].Has_Practical) === 1);
+      } catch (stdErr) {
+        console.warn('Failed to check Has_Practical for standard:', stdErr.message);
+      }
+    }
+
     let certOptions = {
       emp_id,
       emp_name,
@@ -1621,9 +1674,12 @@ app.post('/api/certificates/generate', async (req, res) => {
       standard: normalizedStandard,
       certification_type: resolvedCertificationType,
       previous_certificate_no: isRecertification ? trimmedPreviousCertificateNo : null,
-      certificate_template // Pass the template override
+      certificate_template, // Pass the template override
+      vision_data,
+      photo_buffer: req.file ? req.file.buffer : null,
+      photo_mime: req.file ? req.file.mimetype : null
     };
-    
+
     // Check if this is a combined PT/MPT certificate
     if (is_combined && general_data && specific_data) {
       // Combined certificate with 2 or 3 rows
@@ -1647,33 +1703,66 @@ app.post('/api/certificates/generate', async (req, res) => {
           passing_criteria: practical_data.passing_criteria.toString().replace('%', '')
         };
       }
-    } else if (has_practical && practical_data) {
-      // Single standard with practical — double-row certificate
-      certOptions.has_practical = true;
-      certOptions.percentage = percentage ? percentage.toString().replace('%', '') : null;
-      certOptions.passing_criteria = passing_criteria ? passing_criteria.toString().replace('%', '') : '80';
-      certOptions.practical_data = {
-        standard: practical_data.standard,
-        percentage: practical_data.percentage.toString().replace('%', ''),
-        passing_criteria: practical_data.passing_criteria.toString().replace('%', '')
-      };
-
-      // Also check template using practical standard name
-      if (!certificate_template && practical_data.standard) {
-        try {
-          const [rows] = await pool.query(
-            'SELECT Certificate_Template FROM standard WHERE Standard_List = ?',
-            [String(practical_data.standard).trim()]
-          );
-          if (rows && rows.length > 0 && rows[0].Certificate_Template) {
-            certOptions.certificate_template = String(rows[0].Certificate_Template).trim();
-          }
-        } catch (_) { /* ignore */ }
-      }
     } else {
       // Regular single certificate
       certOptions.percentage = percentage ? percentage.toString().replace('%', '') : null;
       certOptions.passing_criteria = passing_criteria ? passing_criteria.toString().replace('%', '') : '80';
+
+      // Single standard whose practical checklist is enabled => 2-row certificate
+      // (theory + practical). Use the practical_data sent by the client, or fall
+      // back to the candidate's practical result in the DB so generation works
+      // regardless of how the client matched standard names.
+      if (practicalRequired) {
+        let effectivePractical = practical_data;
+
+        if (!effectivePractical) {
+          const targetBase = canonicalBase(normalizedStandard);
+          const [pracRows] = await pool.query(
+            `SELECT STANDARD, PERCENTAGE, PASSING_CRITERIA, STATUS
+             FROM result
+             WHERE ID = ? AND STANDARD LIKE '%(Practical)%'`,
+            [String(emp_id).trim()]
+          );
+          const match = pracRows.find(
+            (r) => canonicalBase(r.STANDARD) === targetBase &&
+                   String(r.STATUS || '').trim().toLowerCase() === 'pass'
+          );
+          if (match) {
+            effectivePractical = {
+              standard: match.STANDARD,
+              percentage: match.PERCENTAGE,
+              passing_criteria: match.PASSING_CRITERIA
+            };
+          }
+        }
+
+        // Practical required but none exists yet => certificate is NOT ready.
+        if (!effectivePractical) {
+          return res.status(400).json({
+            error: 'Practical is required for this standard. Add the practical result before generating the certificate.'
+          });
+        }
+
+        certOptions.is_single_with_practical = true;
+        certOptions.practical_data = {
+          standard: effectivePractical.standard,
+          percentage: String(effectivePractical.percentage).replace('%', ''),
+          passing_criteria: String(effectivePractical.passing_criteria).replace('%', '')
+        };
+
+        // Also check template using practical standard name
+        if (!certificate_template && effectivePractical.standard) {
+          try {
+            const [rows] = await pool.query(
+              'SELECT Certificate_Template FROM standard WHERE Standard_List = ?',
+              [String(effectivePractical.standard).trim()]
+            );
+            if (rows && rows.length > 0 && rows[0].Certificate_Template) {
+              certOptions.certificate_template = String(rows[0].Certificate_Template).trim();
+            }
+          } catch (_) { /* ignore */ }
+        }
+      }
     }
     
     const result = await generateCertificate(certOptions);

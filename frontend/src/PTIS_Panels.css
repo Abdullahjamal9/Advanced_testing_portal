@@ -1,0 +1,164 @@
+/* PTIS_Panels.css
+ *
+ * Visual language ported from the ERP portal's design system
+ * (iso-frontend-ptis/src/assets/style.css) so the standalone Testing
+ * portal matches it.
+ *
+ * The ERP original hardcodes light-only colors. This port drives every
+ * color through CSS variables and re-declares them under
+ * [data-theme='dark'], so the Testing portal's dark mode keeps working.
+ * ThemeContext stamps data-theme onto <html>.
+ */
+
+:root {
+  --ptis-panel-bg: #ffffff;
+  --ptis-panel-border: #ececf0;
+  --ptis-panel-shadow: 0 25px 60px rgba(15, 23, 42, 0.05);
+  --ptis-panel-chip-bg: #f4f4f7;
+
+  --ptis-card-bg: #ffffff;
+  --ptis-card-border: #efefef;
+  --ptis-card-heading: #1d1d23;
+  --ptis-card-muted: #7a7a84;
+
+  --ptis-eyebrow: #b5b5bd;
+
+  --ptis-accent-bg: linear-gradient(135deg, #fff1f2, #ffe6e6);
+  --ptis-accent-border: #ffd4d8;
+  --ptis-warning-bg: linear-gradient(135deg, #fff6e5, #ffe8d1);
+  --ptis-warning-border: #ffe2c3;
+
+  --ptis-grad-surface: #ffffff;
+}
+
+[data-theme='dark'] {
+  --ptis-panel-bg: #1e293b;
+  --ptis-panel-border: #334155;
+  --ptis-panel-shadow: 0 25px 60px rgba(0, 0, 0, 0.45);
+  --ptis-panel-chip-bg: #0f172a;
+
+  --ptis-card-bg: #1e293b;
+  --ptis-card-border: #334155;
+  --ptis-card-heading: #ffffff;
+  --ptis-card-muted: #94a3b8;
+
+  --ptis-eyebrow: #94a3b8;
+
+  --ptis-accent-bg: linear-gradient(135deg, #3b1d24, #2b1419);
+  --ptis-accent-border: #5b2733;
+  --ptis-warning-bg: linear-gradient(135deg, #3a2a14, #2a1d0e);
+  --ptis-warning-border: #5c421d;
+
+  --ptis-grad-surface: #1e293b;
+}
+
+/* ── Panel: the standard section container ───────────────────────── */
+
+.panel {
+  background: var(--ptis-panel-bg);
+  border-radius: 32px;
+  border: 1px solid var(--ptis-panel-border);
+  padding: 32px;
+  box-shadow: var(--ptis-panel-shadow);
+}
+
+.panel header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 24px;
+}
+
+.panel header button {
+  border: none;
+  background: var(--ptis-panel-chip-bg);
+  border-radius: 999px;
+  padding: 8px 16px;
+  font-size: 12px;
+  color: var(--ptis-card-heading);
+  cursor: pointer;
+}
+
+/* ── Stat cards: the dashboard KPI row ───────────────────────────── */
+
+.lms-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 20px;
+}
+
+.stat-card {
+  border-radius: 20px;
+  padding: 24px;
+  border: 1px solid var(--ptis-card-border);
+  background: var(--ptis-card-bg);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 140px;
+}
+
+.stat-card p {
+  margin: 0;
+  color: var(--ptis-card-muted);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.stat-card h3 {
+  font-size: 34px;
+  margin: 0;
+  color: var(--ptis-card-heading);
+}
+
+.stat-card span {
+  color: var(--ptis-card-muted);
+  font-size: 13px;
+}
+
+.stat-card.accent {
+  background: var(--ptis-accent-bg);
+  border-color: var(--ptis-accent-border);
+}
+
+.stat-card.warning {
+  background: var(--ptis-warning-bg);
+  border-color: var(--ptis-warning-border);
+}
+
+/* ── Eyebrow label ───────────────────────────────────────────────── */
+
+.eyebrow {
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-size: 11px;
+  color: var(--ptis-eyebrow);
+}
+
+/* ── Gradient outline hover (filter / action buttons) ─────────────
+ * Draws a gradient border via two stacked backgrounds clipped to the
+ * padding-box and border-box, and fills the label text with the same
+ * gradient. Needs real CSS - it cannot be expressed as inline styles.
+ */
+
+.grad-hover-outline {
+  background-color: var(--ptis-grad-surface) !important;
+  background-image:
+    linear-gradient(var(--ptis-grad-surface), var(--ptis-grad-surface)),
+    linear-gradient(120deg, rgb(185, 28, 60), rgb(215, 38, 61)) !important;
+  background-origin: border-box !important;
+  background-clip: padding-box, border-box !important;
+  border: 2px solid transparent !important;
+}
+
+.grad-hover-outline .grad-label {
+  background: linear-gradient(120deg, rgb(185, 28, 60), rgb(215, 38, 61));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+}
+
+.grad-hover-outline .grad-icon {
+  color: rgb(215, 38, 61) !important;
+}

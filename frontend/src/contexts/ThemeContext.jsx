@@ -16,6 +16,13 @@ export const ThemeProvider = ({ children }) => {
     });
   };
 
+  // Mirror the theme onto <html> so plain CSS can react to it. The panel /
+  // stat-card styles ported from the ERP portal are class-based, so they
+  // need a DOM hook rather than the JS theme object used by inline styles.
+  useEffect(() => {
+    document.documentElement.dataset.theme = isDarkMode ? 'dark' : 'light';
+  }, [isDarkMode]);
+
   const theme = {
     bg: {
       primary: isDarkMode ? '#0f172a' : '#ffffff',

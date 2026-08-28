@@ -21,8 +21,6 @@ import {
   Plus,
   Edit2,
   Trash2,
-  TrendingUp,
-  Award,
   FileCheck,
   Moon,
   Sun,
@@ -30,11 +28,12 @@ import {
   Info
 } from 'lucide-react';
 import { useTheme } from './contexts/ThemeContext';
-import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, LineChart, Line } from 'recharts';
+import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, AreaChart, Area } from 'recharts';
 import StandardsAdminPage from './admin/StandardsAdminPage';
 import QuestionsAdminPage from './admin/QuestionsAdminPage';
 import ptisLogo from './assets/ptisLogo.png';
 import './LoginPage.css';
+import './PTIS_Panels.css';
 import { addToast, removeToast, subscribeToasts, getToastsSnapshot } from './utils/toastStore';
 
 // Toast Notification Component
@@ -464,8 +463,6 @@ const TestingModule = () => {
   const isTablet = viewportWidth <= 1024;
   const contentMaxWidth = isTablet ? '100%' : '1200px';
   const twoColumnGrid = isMobile ? '1fr' : '1fr 1fr';
-  const dashboardFourCol = isMobile ? '1fr' : isTablet ? 'repeat(2, 1fr)' : 'repeat(4, 1fr)';
-  const dashboardTwoCol = isMobile ? '1fr' : 'repeat(2, 1fr)';
 
   // Toast Helper Function
   const showToast = useCallback((message, type = 'info') => {
@@ -537,6 +534,25 @@ const TestingModule = () => {
     modalBg: isDarkMode ? '#1e293b' : 'white',
     modalOverlay: 'rgba(26, 26, 46, 0.85)'
   };
+
+  // Chart chrome, matching the ERP portal's charts. The ERP original
+  // hardcodes light colors; these follow the active theme instead.
+  const ttStyle = {
+    background: theme.bg.card,
+    border: `1px solid ${isDarkMode ? '#334155' : '#ececf0'}`,
+    borderRadius: 12,
+    boxShadow: `0 8px 24px ${isDarkMode ? 'rgba(0,0,0,0.4)' : 'rgba(0,0,0,0.08)'}`,
+    fontSize: 13,
+    color: theme.text.primary
+  };
+  const axStyle = {
+    axisLine: false,
+    tickLine: false,
+    tick: { fill: isDarkMode ? '#94a3b8' : '#9a9aaa', fontSize: 11 }
+  };
+  const chartGridStroke = isDarkMode ? '#334155' : '#ececf0';
+  const chartEmptyStyle = { color: isDarkMode ? '#94a3b8' : '#9a9aaa' };
+  const chartGrid = 'repeat(auto-fit, minmax(420px, 1fr))';
 
   // Debug
   useEffect(() => {
@@ -2634,7 +2650,164 @@ const TestingModule = () => {
         const [certificateGoToPage, setCertificateGoToPage] = useState('');
         const [certTypes, setCertTypes] = useState({}); // key: stable certificate row id, value: 'New' or 'Recertification'
         const [previousCertNumbers, setPreviousCertNumbers] = useState({}); // key: stable certificate row id, value: manual previous certificate no
+        const [certExtras, setCertExtras] = useState({}); // key: stable certificate row id, value: { near_vision, color_vision, training_hours, education, photo }
+        const [certModal, setCertModal] = useState(null); // { rowKey, result, selectedCertType, previousCertNo } while the Vision/Photo modal is open
+        const [certGenerating, setCertGenerating] = useState(false);
         const certificateItemsPerPage = 25;
+
+        const handleGenerateCertificateSubmit = async () => {
+          if (!certModal) return;
+          const { rowKey, result, selectedCertType, previousCertNo, isGeneralSpecific } = certModal;
+
+          try {
+            const trimmedPreviousCertNo = String(previousCertNo || '').trim();
+            if (selectedCertType === 'Recertification' && !trimmedPreviousCertNo) {
+              showToast('Please enter Previous Certificate No. for Re-Certification.', 'error');
+              return;
+            }
+
+            // Vision Examination is only applicable to General/Specific tests.
+            if (isGeneralSpecific) {
+              const extrasCheck = certExtras[rowKey] || {};
+              const requiredVisionFields = [
+                { key: 'near_vision', label: 'Near Vision' },
+                { key: 'color_vision', label: 'Color Vision' },
+                { key: 'training_hours', label: 'Training Hours' },
+                { key: 'education', label: 'Education' }
+              ];
+              const missingVisionField = requiredVisionFields.find(
+                (field) => !String(extrasCheck[field.key] || '').trim()
+              );
+              if (missingVisionField) {
+                showToast(`Please enter ${missingVisionField.label}.`, 'error');
+                return;
+              }
+            }
+
+            setCertGenerating(true);
+
+            let certData;
+
+            // Check if this is a combined PT/MPT certificate
+            if (result.IS_COMBINED && result.GENERAL_DATA && result.SPECIFIC_DATA) {
+              // Combined certificate with 2 or 3 rows
+              certData = {
+                emp_id: norm(result.ID),
+                emp_name: norm(result.NAME),
+                test_date: norm(result.DATE),
+                status: norm(result.STATUS),
+                standard: norm(result.STANDARD),
+                is_combined: true,
+                general_data: {
+                  standard: norm(result.GENERAL_DATA.STANDARD),
+                  percentage: toPctNumber(result.GENERAL_DATA.PERCENTAGE).toFixed(2),
+                  passing_criteria: norm(result.GENERAL_DATA.PASSING_CRITERIA)
+                },
+                specific_data: {
+                  standard: norm(result.SPECIFIC_DATA.STANDARD),
+                  percentage: toPctNumber(result.SPECIFIC_DATA.PERCENTAGE).toFixed(2),
+                  passing_criteria: norm(result.SPECIFIC_DATA.PASSING_CRITERIA)
+                },
+                certification_type: selectedCertType
+              };
+
+              // Add practical data if available
+              if (result.PRACTICAL_DATA) {
+                certData.practical_data = {
+                  standard: norm(result.PRACTICAL_DATA.STANDARD),
+                  percentage: toPctNumber(result.PRACTICAL_DATA.PERCENTAGE).toFixed(2),
+                  passing_criteria: norm(result.PRACTICAL_DATA.PASSING_CRITERIA)
+                };
+              }
+            } else {
+              // Regular single certificate
+              certData = {
+                emp_id: norm(result.ID),
+                emp_name: norm(result.NAME),
+                test_date: norm(result.DATE),
+                status: norm(result.STATUS),
+                standard: norm(result.STANDARD),
+                percentage: toPctNumber(result.PERCENTAGE).toFixed(2),
+                passing_criteria: norm(result.PASSING_CRITERIA),
+                certification_type: selectedCertType
+              };
+
+              // Single standard that requires a practical: send the
+              // practical result too so the backend issues a 2-row
+              // certificate. The backend re-checks the standard's
+              // practical checklist before honoring this.
+              if (result.IS_SINGLE_WITH_PRACTICAL && result.PRACTICAL_DATA) {
+                certData.is_single_with_practical = true;
+                certData.practical_data = {
+                  standard: norm(result.PRACTICAL_DATA.STANDARD),
+                  percentage: toPctNumber(result.PRACTICAL_DATA.PERCENTAGE).toFixed(2),
+                  passing_criteria: norm(result.PRACTICAL_DATA.PASSING_CRITERIA)
+                };
+              }
+            }
+
+            if (selectedCertType === 'Recertification') {
+              certData.previous_certificate_no = trimmedPreviousCertNo;
+            }
+
+            // Vision Examination values + photo are manually entered per
+            // certificate, kept in certExtras keyed by row. Vision Examination
+            // only applies to General/Specific tests.
+            const extras = certExtras[rowKey] || {};
+
+            const formData = new FormData();
+            Object.entries(certData).forEach(([key, value]) => {
+              if (value === undefined || value === null) return;
+              formData.append(key, typeof value === 'object' ? JSON.stringify(value) : String(value));
+            });
+            if (isGeneralSpecific) {
+              const visionData = {
+                near_vision: extras.near_vision || '',
+                color_vision: extras.color_vision || '',
+                training_hours: extras.training_hours || '',
+                education: extras.education || ''
+              };
+              formData.append('vision_data', JSON.stringify(visionData));
+            }
+            if (extras.photo) {
+              formData.append('photo', extras.photo);
+            }
+
+            // Call backend API to generate certificate
+            const response = await fetch(`${API_BASE_URL}/api/certificates/generate`, {
+              method: 'POST',
+              body: formData
+            });
+
+            if (!response.ok) {
+              const errorData = await response.json();
+              throw new Error(errorData.details || errorData.detail || errorData.error || 'Failed to generate certificate');
+            }
+
+            // Get the PDF blob
+            const blob = await response.blob();
+
+            // Create download link
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${norm(result.STANDARD)}_Certificate_${norm(result.ID)}_${norm(result.NAME)}.pdf`;
+            document.body.appendChild(a);
+            a.click();
+
+            // Cleanup
+            window.URL.revokeObjectURL(url);
+            document.body.removeChild(a);
+
+            showToast(`Certificate generated successfully for ${norm(result.NAME)}!`, 'success');
+            setCertModal(null);
+          } catch (error) {
+            console.error('Certificate generation error:', error);
+            showToast(`Failed to generate certificate: ${error.message}`, 'error');
+          } finally {
+            setCertGenerating(false);
+          }
+        };
 
       const filteredResults = useMemo(() => {
         let passed = results.filter(r => isPass(r.STATUS));
@@ -3135,117 +3308,14 @@ const TestingModule = () => {
                         </td>
                         <td style={{ padding: '16px 20px', textAlign: 'center' }}>
                           <button
-                            onClick={async () => {
-                              try {
-                                const trimmedPreviousCertNo = String(previousCertNo || '').trim();
-                                if (selectedCertType === 'Recertification' && !trimmedPreviousCertNo) {
-                                  showToast('Please enter Previous Certificate No. for Re-Certification.', 'error');
-                                  return;
-                                }
-
-                                let certData;
-                                
-                                // Check if this is a combined PT/MPT certificate
-                                if (result.IS_COMBINED && result.GENERAL_DATA && result.SPECIFIC_DATA) {
-                                  // Combined certificate with 2 or 3 rows
-                                  certData = {
-                                    emp_id: norm(result.ID),
-                                    emp_name: norm(result.NAME),
-                                    test_date: norm(result.DATE),
-                                    status: norm(result.STATUS),
-                                    standard: norm(result.STANDARD),
-                                    is_combined: true,
-                                    general_data: {
-                                      standard: norm(result.GENERAL_DATA.STANDARD),
-                                      percentage: toPctNumber(result.GENERAL_DATA.PERCENTAGE).toFixed(2),
-                                      passing_criteria: norm(result.GENERAL_DATA.PASSING_CRITERIA)
-                                    },
-                                    specific_data: {
-                                      standard: norm(result.SPECIFIC_DATA.STANDARD),
-                                      percentage: toPctNumber(result.SPECIFIC_DATA.PERCENTAGE).toFixed(2),
-                                      passing_criteria: norm(result.SPECIFIC_DATA.PASSING_CRITERIA)
-                                    },
-                                    certification_type: selectedCertType
-                                  };
-                                  
-                                  // Add practical data if available
-                                  if (result.PRACTICAL_DATA) {
-                                    certData.practical_data = {
-                                      standard: norm(result.PRACTICAL_DATA.STANDARD),
-                                      percentage: toPctNumber(result.PRACTICAL_DATA.PERCENTAGE).toFixed(2),
-                                      passing_criteria: norm(result.PRACTICAL_DATA.PASSING_CRITERIA)
-                                    };
-                                  }
-                                } else if (result.HAS_PRACTICAL && result.PRACTICAL_DATA) {
-                                  // Single standard + practical (double-row certificate)
-                                  certData = {
-                                    emp_id: norm(result.ID),
-                                    emp_name: norm(result.NAME),
-                                    test_date: norm(result.DATE),
-                                    status: norm(result.STATUS),
-                                    standard: norm(result.STANDARD),
-                                    percentage: toPctNumber(result.PERCENTAGE).toFixed(2),
-                                    passing_criteria: norm(result.PASSING_CRITERIA),
-                                    has_practical: true,
-                                    practical_data: {
-                                      standard: norm(result.PRACTICAL_DATA.STANDARD),
-                                      percentage: toPctNumber(result.PRACTICAL_DATA.PERCENTAGE).toFixed(2),
-                                      passing_criteria: norm(result.PRACTICAL_DATA.PASSING_CRITERIA)
-                                    },
-                                    certification_type: selectedCertType
-                                  };
-                                } else {
-                                  // Regular single certificate
-                                  certData = {
-                                    emp_id: norm(result.ID),
-                                    emp_name: norm(result.NAME),
-                                    test_date: norm(result.DATE),
-                                    status: norm(result.STATUS),
-                                    standard: norm(result.STANDARD),
-                                    percentage: toPctNumber(result.PERCENTAGE).toFixed(2),
-                                    passing_criteria: norm(result.PASSING_CRITERIA),
-                                    certification_type: selectedCertType
-                                  };
-                                }
-
-                                if (selectedCertType === 'Recertification') {
-                                  certData.previous_certificate_no = trimmedPreviousCertNo;
-                                }
-
-                                // Call backend API to generate certificate
-                                const response = await fetch(`${API_BASE_URL}/api/certificates/generate`, {
-                                  method: 'POST',
-                                  headers: {
-                                    'Content-Type': 'application/json',
-                                  },
-                                  body: JSON.stringify(certData)
-                                });
-
-                                if (!response.ok) {
-                                  const errorData = await response.json();
-                                  throw new Error(errorData.detail || 'Failed to generate certificate');
-                                }
-
-                                // Get the PDF blob
-                                const blob = await response.blob();
-                                
-                                // Create download link
-                                const url = window.URL.createObjectURL(blob);
-                                const a = document.createElement('a');
-                                a.href = url;
-                                a.download = `${norm(result.STANDARD)}_Certificate_${norm(result.ID)}_${norm(result.NAME)}.pdf`;
-                                document.body.appendChild(a);
-                                a.click();
-                                
-                                // Cleanup
-                                window.URL.revokeObjectURL(url);
-                                document.body.removeChild(a);
-                                
-                                showToast(`Certificate generated successfully for ${norm(result.NAME)}!`, 'success');
-                              } catch (error) {
-                                console.error('Certificate generation error:', error);
-                                showToast(`Failed to generate certificate: ${error.message}`, 'error');
+                            onClick={() => {
+                              const trimmedPreviousCertNo = String(previousCertNo || '').trim();
+                              if (selectedCertType === 'Recertification' && !trimmedPreviousCertNo) {
+                                showToast('Please enter Previous Certificate No. for Re-Certification.', 'error');
+                                return;
                               }
+                              const isGeneralSpecific = !!(result.IS_COMBINED && result.GENERAL_DATA && result.SPECIFIC_DATA);
+                              setCertModal({ rowKey, result, selectedCertType, previousCertNo: trimmedPreviousCertNo, isGeneralSpecific });
                             }}
                             style={{
                               padding: '10px 16px',
@@ -3398,6 +3468,198 @@ const TestingModule = () => {
               </div>
             )}
           </div>
+
+          {/* Vision Examination + Photo modal (opens before certificate generation) */}
+          {certModal && (
+            <div style={{
+              position: 'fixed',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              backgroundColor: 'rgba(26, 26, 46, 0.85)',
+              backdropFilter: 'blur(4px)',
+              display: 'flex',
+              justifyContent: 'center',
+              alignItems: 'center',
+              zIndex: 1000,
+              padding: '20px'
+            }}>
+              <div style={{
+                backgroundColor: theme.bg.card,
+                padding: isMobile ? '22px 16px' : '35px',
+                borderRadius: '28px',
+                width: '100%',
+                maxWidth: isMobile ? '100%' : '520px',
+                maxHeight: '90vh',
+                overflowY: 'auto',
+                boxShadow: `0 20px 60px ${isDarkMode ? 'rgba(0,0,0,0.5)' : 'rgba(0, 0, 0, 0.3)'}`,
+                animation: 'fadeIn 0.2s ease',
+                position: 'relative'
+              }}>
+                <button
+                  type="button"
+                  onClick={() => setCertModal(null)}
+                  aria-label="Close"
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.backgroundColor = '#c0392b';
+                    e.currentTarget.style.color = '#fff';
+                    e.currentTarget.style.borderColor = '#c0392b';
+                    e.currentTarget.style.boxShadow = '0 6px 16px rgba(192, 57, 43, 0.35)';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.backgroundColor = colors.cardAltBg;
+                    e.currentTarget.style.color = colors.text;
+                    e.currentTarget.style.borderColor = colors.inputBorder;
+                    e.currentTarget.style.boxShadow = 'none';
+                  }}
+                  style={{
+                    position: 'absolute',
+                    top: '12px',
+                    right: '12px',
+                    width: '34px',
+                    height: '34px',
+                    borderRadius: '50%',
+                    border: `1px solid ${colors.inputBorder}`,
+                    backgroundColor: colors.cardAltBg,
+                    color: colors.text,
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    cursor: 'pointer',
+                    fontSize: '16px',
+                    fontWeight: 700,
+                    lineHeight: 1,
+                    transition: 'all 0.2s ease'
+                  }}
+                >
+                  X
+                </button>
+                <h3 style={{
+                  marginTop: 0,
+                  marginBottom: '25px',
+                  color: theme.text.primary,
+                  fontSize: '1.4em',
+                  fontWeight: '600',
+                  borderBottom: '3px solid #16a085',
+                  paddingBottom: '15px',
+                  paddingRight: '44px'
+                }}>
+                  Certificate Details — {norm(certModal.result.NAME)}
+                </h3>
+
+                {certModal.isGeneralSpecific && (
+                  <>
+                    <p style={{ color: colors.textMuted, fontSize: '0.9em', marginTop: 0, marginBottom: '20px' }}>
+                      Vision Examination values are not part of the test results — enter them manually. All fields are required.
+                    </p>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '15px', marginBottom: '20px' }}>
+                      {[
+                        { key: 'near_vision', label: 'Near Vision' },
+                        { key: 'color_vision', label: 'Color Vision' },
+                        { key: 'training_hours', label: 'Training Hours' },
+                        { key: 'education', label: 'Education' }
+                      ].map(field => (
+                        <div key={field.key}>
+                          <label style={{ display: 'block', marginBottom: '8px', fontWeight: '600', color: colors.text, fontSize: '0.95em' }}>
+                            {field.label} <span style={{ color: '#d7263d' }}>*</span>
+                          </label>
+                          <input
+                            type="text"
+                            required
+                            value={(certExtras[certModal.rowKey] || {})[field.key] || ''}
+                            onChange={(e) => {
+                              const value = e.target.value;
+                              setCertExtras(prev => ({
+                                ...prev,
+                                [certModal.rowKey]: { ...(prev[certModal.rowKey] || {}), [field.key]: value }
+                              }));
+                            }}
+                            style={{
+                              width: '100%',
+                              padding: '10px 12px',
+                              border: `2px solid ${colors.inputBorder}`,
+                              borderRadius: '8px',
+                              fontSize: '14px',
+                              outline: 'none',
+                              boxSizing: 'border-box',
+                              backgroundColor: theme.bg.input,
+                              color: colors.text
+                            }}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+
+                <div style={{ marginBottom: '25px' }}>
+                  <label style={{ display: 'block', marginBottom: '8px', fontWeight: '600', color: colors.text, fontSize: '0.95em' }}>
+                    Passport-Size Photo (optional)
+                  </label>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={(e) => {
+                      const file = e.target.files && e.target.files[0] ? e.target.files[0] : null;
+                      setCertExtras(prev => ({
+                        ...prev,
+                        [certModal.rowKey]: { ...(prev[certModal.rowKey] || {}), photo: file }
+                      }));
+                    }}
+                    style={{
+                      width: '100%',
+                      padding: '8px',
+                      border: `2px solid ${colors.inputBorder}`,
+                      borderRadius: '8px',
+                      fontSize: '13px',
+                      backgroundColor: theme.bg.input,
+                      color: colors.text
+                    }}
+                  />
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
+                  <button
+                    type="button"
+                    onClick={() => setCertModal(null)}
+                    disabled={certGenerating}
+                    style={{
+                      padding: '10px 20px',
+                      backgroundColor: 'transparent',
+                      color: colors.text,
+                      border: `2px solid ${colors.border}`,
+                      borderRadius: '28px',
+                      cursor: certGenerating ? 'not-allowed' : 'pointer',
+                      fontSize: '14px',
+                      fontWeight: '600'
+                    }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleGenerateCertificateSubmit}
+                    disabled={certGenerating}
+                    style={{
+                      padding: '10px 20px',
+                      backgroundColor: '#16a085',
+                      color: 'white',
+                      border: '2px solid #16a085',
+                      borderRadius: '28px',
+                      cursor: certGenerating ? 'not-allowed' : 'pointer',
+                      fontSize: '14px',
+                      fontWeight: '600',
+                      opacity: certGenerating ? 0.7 : 1
+                    }}
+                  >
+                    {certGenerating ? 'Generating...' : 'Generate Certificate'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       );
     };
@@ -3722,327 +3984,132 @@ const TestingModule = () => {
             {adminActiveTab === 'dashboard' && (
               <>
                 {/* KPI Cards */}
-                <div style={{ display: 'grid', gridTemplateColumns: dashboardFourCol, gap: '20px', marginBottom: '30px' }}>
-                  <div style={{
-                    ...commonStyles.card,
-                    background: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)',
-                    color: '#fff',
-                    boxShadow: '0 4px 15px rgba(26, 26, 46, 0.3)'
-                  }}>
-                    <FileText size={48} color="#fff" style={{ marginBottom: '15px', opacity: 0.9 }} />
-                    <h3 style={{ fontSize: '1em', fontWeight: '500', marginBottom: '10px', color: 'rgba(255,255,255,0.9)' }}>Total Tests</h3>
-                    <p style={{ fontSize: '2.5em', fontWeight: 'bold', color: '#fff', margin: 0 }}>{totalTests}</p>
-                  </div>
-                  <div style={{
-                    ...commonStyles.card,
-                    background: 'linear-gradient(135deg, #27ae60 0%, #229954 100%)',
-                    color: '#fff',
-                    boxShadow: '0 4px 15px rgba(39, 174, 96, 0.3)'
-                  }}>
-                    <CheckCircle size={48} color="#fff" style={{ marginBottom: '15px', opacity: 0.9 }} />
-                    <h3 style={{ fontSize: '1em', fontWeight: '500', marginBottom: '10px', color: 'rgba(255,255,255,0.9)' }}>Passed</h3>
-                    <p style={{ fontSize: '2.5em', fontWeight: 'bold', color: '#fff', margin: 0 }}>{passedTests}</p>
-                  </div>
-                  <div style={{
-                    ...commonStyles.card,
-                    background: 'linear-gradient(135deg, #c0392b 0%, #e74c3c 50%, #a93226 100%)',
-                    color: '#fff',
-                    boxShadow: '0 4px 15px rgba(192, 57, 43, 0.3)'
-                  }}>
-                    <XCircle size={48} color="#fff" style={{ marginBottom: '15px', opacity: 0.9 }} />
-                    <h3 style={{ fontSize: '1em', fontWeight: '500', marginBottom: '10px', color: 'rgba(255,255,255,0.9)' }}>Failed</h3>
-                    <p style={{ fontSize: '2.5em', fontWeight: 'bold', color: '#fff', margin: 0 }}>{failedTests}</p>
-                  </div>
-                  <div style={{
-                    ...commonStyles.card,
-                    background: 'linear-gradient(135deg, #3498db 0%, #2980b9 100%)',
-                    color: '#fff',
-                    boxShadow: '0 4px 15px rgba(52, 152, 219, 0.3)'
-                  }}>
-                    <BarChart3 size={48} color="#fff" style={{ marginBottom: '15px', opacity: 0.9 }} />
-                    <h3 style={{ fontSize: '1em', fontWeight: '500', marginBottom: '10px', color: 'rgba(255,255,255,0.9)' }}>Avg Score</h3>
-                    <p style={{ fontSize: '2.5em', fontWeight: 'bold', color: '#fff', margin: 0 }}>{averageScore.toFixed(1)}%</p>
-                  </div>
-                </div>
+                <section className="lms-stat-grid" style={{ marginBottom: '30px' }}>
+                  <article className="stat-card">
+                    <p>Total Tests</p>
+                    <h3>{totalTests}</h3>
+                    <span>All time</span>
+                  </article>
+                  <article className="stat-card">
+                    <p>Passed</p>
+                    <h3>{passedTests}</h3>
+                    <span>{totalTests > 0 ? ((passedTests / totalTests) * 100).toFixed(0) : 0}% pass rate</span>
+                  </article>
+                  <article className="stat-card accent">
+                    <p>Failed</p>
+                    <h3>{failedTests}</h3>
+                    <span>Needs review</span>
+                  </article>
+                  <article className="stat-card warning">
+                    <p>Avg Score</p>
+                    <h3>{averageScore.toFixed(1)}%</h3>
+                    <span>Across all tests</span>
+                  </article>
+                </section>
 
                 {/* Charts Section */}
-                <div style={{ display: 'grid', gridTemplateColumns: dashboardTwoCol, gap: '20px', marginBottom: '30px' }}>
-                  {/* Pass/Fail Pie Chart */
-                  <div style={{
-                    backgroundColor: theme.bg.card,
-                    borderRadius: '28px',
-                    overflow: 'hidden',
-                    boxShadow: `0 4px 15px ${isDarkMode ? 'rgba(0,0,0,0.3)' : 'rgba(0,0,0,0.1)'}`,
-                    border: `1px solid ${theme.border.default}`,
-                    padding: '25px'
-                  }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px' }}>
-                      <TrendingUp size={24} color={theme.text.primary} />
-                      <h3 style={{ margin: 0, color: theme.text.primary, fontSize: '1.2em', fontWeight: '600' }}>Pass/Fail Distribution</h3>
-                    </div>
-                    {results.length === 0 ? (
-                      <div style={{ textAlign: 'center', padding: '40px', color: theme.text.muted }}>
-                        <AlertCircle size={48} color={theme.text.muted} style={{ marginBottom: '10px' }} />
-                        <p>No data available</p>
-                      </div>
-                    ) : (
-                      <ResponsiveContainer width="100%" height={300}>
+                <div style={{ display: 'grid', gridTemplateColumns: chartGrid, gap: 24, marginBottom: 32 }}>
+                  <div className="panel" style={{ padding: 28 }}>
+                    <h3 style={{ margin: '0 0 20px', color: theme.text.primary }}>Pass / Fail Distribution</h3>
+                    {results.length === 0 ? <p style={chartEmptyStyle}>No data available</p> : (
+                      <ResponsiveContainer width="100%" height={280}>
                         <PieChart>
-                          <defs>
-                            <linearGradient id="passGradient" x1="0" y1="0" x2="0" y2="1">
-                              <stop offset="0%" stopColor="#2ecc71" />
-                              <stop offset="100%" stopColor="#27ae60" />
-                            </linearGradient>
-                            <linearGradient id="failGradient" x1="0" y1="0" x2="0" y2="1">
-                              <stop offset="0%" stopColor="#e74c3c" />
-                              <stop offset="100%" stopColor="#c0392b" />
-                            </linearGradient>
-                          </defs>
-                          <Pie
-                            data={[
-                              { name: 'Passed', value: passedTests, color: 'url(#passGradient)' },
-                              { name: 'Failed', value: failedTests, color: 'url(#failGradient)' }
-                            ]}
-                            cx="50%"
-                            cy="50%"
-                            labelLine={false}
-                            label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}
-                            outerRadius={100}
-                            fill="#8884d8"
-                            dataKey="value"
-                            stroke="none"
-                          >
-                            {[
-                              { name: 'Passed', value: passedTests, color: 'url(#passGradient)' },
-                              { name: 'Failed', value: failedTests, color: 'url(#failGradient)' }
-                            ].map((entry, index) => (
-                              <Cell key={`cell-${index}`} fill={entry.color} stroke="none" />
-                            ))}
+                          <Pie data={[{ name: 'Passed', value: passedTests }, { name: 'Failed', value: failedTests }]} cx="50%" cy="50%" innerRadius={70} outerRadius={110} paddingAngle={2} dataKey="value">
+                            <Cell fill="#27ae60" />
+                            <Cell fill="#d7263d" />
                           </Pie>
-                          <Tooltip
-                            contentStyle={{ backgroundColor: theme.bg.card, border: `1px solid ${theme.border.default}`, color: theme.text.primary }}
-                            itemStyle={{ color: theme.text.primary }}
-                            labelStyle={{ color: theme.text.primary }}
-                          />
-                          <Legend wrapperStyle={{ color: theme.text.primary }} />
+                          <Tooltip contentStyle={ttStyle} />
+                          <Legend />
                         </PieChart>
                       </ResponsiveContainer>
                     )}
                   </div>
 
-                  /* Standards Performance Bar Chart */}
-                  <div style={{
-                    backgroundColor: theme.bg.card,
-                    borderRadius: '28px',
-                    overflow: 'hidden',
-                    boxShadow: `0 4px 15px ${isDarkMode ? 'rgba(0,0,0,0.3)' : 'rgba(0,0,0,0.1)'}`,
-                    border: `1px solid ${theme.border.default}`,
-                    padding: '25px'
-                  }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px' }}>
-                      <Award size={24} color={theme.text.primary} />
-                      <h3 style={{ margin: 0, color: theme.text.primary, fontSize: '1.2em', fontWeight: '600' }}>Performance by Standard</h3>
-                    </div>
-                    {results.length === 0 ? (
-                      <div style={{ textAlign: 'center', padding: '40px', color: theme.text.muted }}>
-                        <AlertCircle size={48} color={theme.text.muted} style={{ marginBottom: '10px' }} />
-                        <p>No data available</p>
-                      </div>
-                    ) : (
-                      <ResponsiveContainer width="100%" height={300}>
+                  <div className="panel" style={{ padding: 28 }}>
+                    <h3 style={{ margin: '0 0 20px', color: theme.text.primary }}>Performance by Standard</h3>
+                    {results.length === 0 ? <p style={chartEmptyStyle}>No data available</p> : (
+                      <ResponsiveContainer width="100%" height={280}>
                         <BarChart
                           data={(() => {
                             const standardStats = {};
                             results.forEach(r => {
                               const std = norm(r.STANDARD);
-                              if (!standardStats[std]) {
-                                standardStats[std] = { standard: std, total: 0, passed: 0, failed: 0, avgScore: 0, sumScore: 0 };
-                              }
-                              standardStats[std].total++;
-                              standardStats[std].sumScore += toPctNumber(r.PERCENTAGE);
-                              if (isPass(r.STATUS)) {
-                                standardStats[std].passed++;
-                              } else {
-                                standardStats[std].failed++;
-                              }
+                              if (!standardStats[std]) standardStats[std] = { standard: std, passed: 0, failed: 0 };
+                              if (isPass(r.STATUS)) standardStats[std].passed++; else standardStats[std].failed++;
                             });
-                            return Object.values(standardStats).map(s => ({
-                              ...s,
-                              avgScore: (s.sumScore / s.total).toFixed(1),
-                              passRate: ((s.passed / s.total) * 100).toFixed(1)
-                            }));
+                            return Object.values(standardStats);
                           })()}
-                          margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
+                          margin={{ top: 5, right: 20, left: 0, bottom: 5 }}
+                        >
+                          <CartesianGrid vertical={false} stroke={chartGridStroke} />
+                          <XAxis dataKey="standard" {...axStyle} />
+                          <YAxis {...axStyle} />
+                          <Tooltip contentStyle={ttStyle} />
+                          <Legend />
+                          <Bar dataKey="passed" fill="#27ae60" name="Passed" radius={[6, 6, 0, 0]} />
+                          <Bar dataKey="failed" fill="#d7263d" name="Failed" radius={[6, 6, 0, 0]} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    )}
+                  </div>
+
+                  <div className="panel" style={{ padding: 28 }}>
+                    <h3 style={{ margin: '0 0 20px', color: theme.text.primary }}>Score Distribution</h3>
+                    {results.length === 0 ? <p style={chartEmptyStyle}>No data available</p> : (() => {
+                      const ranges = { '0-40%': 0, '40-60%': 0, '60-80%': 0, '80-100%': 0 };
+                      results.forEach(r => {
+                        const score = toPctNumber(r.PERCENTAGE);
+                        if (score < 40) ranges['0-40%']++;
+                        else if (score < 60) ranges['40-60%']++;
+                        else if (score < 80) ranges['60-80%']++;
+                        else ranges['80-100%']++;
+                      });
+                      const histData = Object.entries(ranges).map(([range, count]) => ({ range, count }));
+                      return (
+                        <ResponsiveContainer width="100%" height={280}>
+                          <BarChart data={histData} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
+                            <CartesianGrid vertical={false} stroke={chartGridStroke} />
+                            <XAxis dataKey="range" {...axStyle} />
+                            <YAxis {...axStyle} />
+                            <Tooltip contentStyle={ttStyle} />
+                            <Bar dataKey="count" name="Tests" radius={[6, 6, 0, 0]}>
+                              {histData.map((entry, index) => (
+                                <Cell key={index} fill={entry.range === '0-40%' ? '#d7263d' : entry.range === '40-60%' ? '#e67e22' : entry.range === '60-80%' ? '#f5a623' : '#27ae60'} />
+                              ))}
+                            </Bar>
+                          </BarChart>
+                        </ResponsiveContainer>
+                      );
+                    })()}
+                  </div>
+
+                  <div className="panel" style={{ padding: 28 }}>
+                    <h3 style={{ margin: '0 0 20px', color: theme.text.primary }}>Performance Trend (Latest 20)</h3>
+                    {results.length === 0 ? <p style={chartEmptyStyle}>No data available</p> : (
+                      <ResponsiveContainer width="100%" height={280}>
+                        <AreaChart
+                          data={results.slice(-20).map((r, idx) => ({ test: `T${idx + 1}`, score: toPctNumber(r.PERCENTAGE) }))}
+                          margin={{ top: 5, right: 20, left: 0, bottom: 5 }}
                         >
                           <defs>
-                            <linearGradient id="barPassGradient" x1="0" y1="0" x2="0" y2="1">
-                              <stop offset="0%" stopColor="#2ecc71" />
-                              <stop offset="100%" stopColor="#27ae60" />
-                            </linearGradient>
-                            <linearGradient id="barFailGradient" x1="0" y1="0" x2="0" y2="1">
-                              <stop offset="0%" stopColor="#e74c3c" />
-                              <stop offset="100%" stopColor="#c0392b" />
+                            <linearGradient id="areaScoreGradient" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="0%" stopColor="#d7263d" stopOpacity={0.35} />
+                              <stop offset="100%" stopColor="#d7263d" stopOpacity={0} />
                             </linearGradient>
                           </defs>
-                          <CartesianGrid strokeDasharray="3 3" stroke={theme.border.default} />
-                          <XAxis dataKey="standard" tick={{ fill: theme.text.primary }} />
-                          <YAxis tick={{ fill: theme.text.primary }} />
-                          <Tooltip
-                            contentStyle={{ backgroundColor: theme.bg.card, border: `1px solid ${theme.border.default}`, color: theme.text.primary }}
-                            itemStyle={{ color: theme.text.primary }}
-                            labelStyle={{ color: theme.text.primary }}
-                          />
-                          <Legend wrapperStyle={{ color: theme.text.primary }} />
-                          <Bar dataKey="passed" fill="url(#barPassGradient)" name="Passed" />
-                          <Bar dataKey="failed" fill="url(#barFailGradient)" name="Failed" />
-                        </BarChart>
-                      </ResponsiveContainer>
-                    )}
-                  </div>
-
-                  {/* Score Distribution & Performance Trend */}
-                  <div style={{
-                    backgroundColor: theme.bg.card,
-                    borderRadius: '28px',
-                    overflow: 'hidden',
-                    boxShadow: `0 4px 15px ${isDarkMode ? 'rgba(0,0,0,0.3)' : 'rgba(0,0,0,0.1)'}`,
-                    border: `1px solid ${theme.border.default}`,
-                    padding: '25px'
-                  }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px' }}>
-                      <BarChart3 size={24} color={theme.text.primary} />
-                      <h3 style={{ margin: 0, color: theme.text.primary, fontSize: '1.2em', fontWeight: '600' }}>Score Distribution</h3>
-                    </div>
-                    {results.length === 0 ? (
-                      <div style={{ textAlign: 'center', padding: '40px', color: theme.text.muted }}>
-                        <AlertCircle size={48} color={theme.text.muted} style={{ marginBottom: '10px' }} />
-                        <p>No data available</p>
-                      </div>
-                    ) : (
-                      <ResponsiveContainer width="100%" height={300}>
-                        <BarChart
-                          data={(() => {
-                            const ranges = {
-                              '0-40%': 0,
-                              '40-60%': 0,
-                              '60-80%': 0,
-                              '80-100%': 0
-                            };
-                            results.forEach(r => {
-                              const score = toPctNumber(r.PERCENTAGE);
-                              if (score < 40) ranges['0-40%']++;
-                              else if (score < 60) ranges['40-60%']++;
-                              else if (score < 80) ranges['60-80%']++;
-                              else ranges['80-100%']++;
-                            });
-                            return Object.entries(ranges).map(([range, count]) => ({
-                              range,
-                              count,
-                              fill: range === '0-40%' ? '#c0392b' : range === '40-60%' ? '#e67e22' : range === '60-80%' ? '#f39c12' : '#27ae60'
-                            }));
-                          })()}
-                          margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
-                        >
-                          <CartesianGrid strokeDasharray="3 3" stroke={theme.border.default} />
-                          <XAxis dataKey="range" tick={{ fill: theme.text.primary }} />
-                          <YAxis tick={{ fill: theme.text.primary }} />
-                          <Tooltip
-                            contentStyle={{ backgroundColor: theme.bg.card, border: `1px solid ${theme.border.default}`, color: theme.text.primary }}
-                            itemStyle={{ color: theme.text.primary }}
-                            labelStyle={{ color: theme.text.primary }}
-                          />
-                          <Legend 
-                            wrapperStyle={{ color: theme.text.primary }} 
-                            formatter={(value) => <span style={{ color: theme.text.primary }}>{value}</span>}
-                          />
-                          <Bar dataKey="count" name="Tests" fill={isDarkMode ? '#ffffff' : '#1a1a2e'} >
-                            {(() => {
-                              const ranges = {
-                                '0-40%': 0,
-                                '40-60%': 0,
-                                '60-80%': 0,
-                                '80-100%': 0
-                              };
-                              results.forEach(r => {
-                                const score = toPctNumber(r.PERCENTAGE);
-                                if (score < 40) ranges['0-40%']++;
-                                else if (score < 60) ranges['40-60%']++;
-                                else if (score < 80) ranges['60-80%']++;
-                                else ranges['80-100%']++;
-                              });
-                              return Object.entries(ranges).map(([range, count], index) => (
-                                <Cell 
-                                  key={`cell-${index}`} 
-                                  fill={range === '0-40%' ? '#c0392b' : range === '40-60%' ? '#e67e22' : range === '60-80%' ? '#f39c12' : '#27ae60'}
-                                />
-                              ));
-                            })()}
-                          </Bar>
-                        </BarChart>
-                      </ResponsiveContainer>
-                    )}
-                  </div>
-
-                  {/* Performance Trend */}
-                  <div style={{
-                    backgroundColor: theme.bg.card,
-                    borderRadius: '28px',
-                    overflow: 'hidden',
-                    boxShadow: `0 4px 15px ${isDarkMode ? 'rgba(0,0,0,0.3)' : 'rgba(0,0,0,0.1)'}`,
-                    border: `1px solid ${theme.border.default}`,
-                    padding: '25px'
-                  }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px' }}>
-                      <TrendingUp size={24} color={theme.text.primary} />
-                      <h3 style={{ margin: 0, color: theme.text.primary, fontSize: '1.2em', fontWeight: '600' }}>Performance Trend (Latest 20 Tests)</h3>
-                    </div>
-                    {results.length === 0 ? (
-                      <div style={{ textAlign: 'center', padding: '40px', color: theme.text.muted }}>
-                        <AlertCircle size={48} color={theme.text.muted} style={{ marginBottom: '10px' }} />
-                        <p>No data available</p>
-                      </div>
-                    ) : (
-                      <ResponsiveContainer width="100%" height={300}>
-                        <LineChart
-                          data={results.slice(-20).map((r, idx) => ({
-                            test: `Test ${idx + 1}`,
-                            score: toPctNumber(r.PERCENTAGE),
-                            name: norm(r.NAME)
-                          }))}
-                          margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
-                        >
-                          <CartesianGrid strokeDasharray="3 3" stroke={theme.border.default} />
-                          <XAxis dataKey="test" tick={{ fill: theme.text.primary }} />
-                          <YAxis domain={[0, 100]} tick={{ fill: theme.text.primary }} />
-                          <Tooltip
-                            contentStyle={{ backgroundColor: theme.bg.card, border: `1px solid ${theme.border.default}`, color: theme.text.primary }}
-                            itemStyle={{ color: theme.text.primary }}
-                            labelStyle={{ color: theme.text.primary }}
-                          />
-                          <Legend wrapperStyle={{ color: theme.text.primary }} />
-                          <Line 
-                            type="monotone" 
-                            dataKey="score" 
-                            stroke={isDarkMode ? '#ffffff' : '#1a1a2e'} 
-                            strokeWidth={2}
-                            name="Score (%)"
-                            dot={{ fill: isDarkMode ? '#ffffff' : '#1a1a2e', r: 4 }}
-                            activeDot={{ r: 6 }}
-                          />
-                        </LineChart>
+                          <CartesianGrid vertical={false} stroke={chartGridStroke} />
+                          <XAxis dataKey="test" {...axStyle} />
+                          <YAxis domain={[0, 100]} {...axStyle} />
+                          <Tooltip contentStyle={ttStyle} />
+                          <Area type="monotone" dataKey="score" stroke="#d7263d" fill="url(#areaScoreGradient)" strokeWidth={2} name="Score (%)" />
+                        </AreaChart>
                       </ResponsiveContainer>
                     )}
                   </div>
                 </div>
 
                 {/* Recent Activity */}
-                <div style={{
-                  backgroundColor: theme.bg.card,
-                  borderRadius: '28px',
-                  overflow: 'hidden',
-                  boxShadow: `0 4px 15px ${isDarkMode ? 'rgba(0,0,0,0.3)' : 'rgba(0,0,0,0.1)'}`,
-                  border: `1px solid ${theme.border.default}`
-                }}>
+                <div className="panel" style={{ overflow: 'hidden', padding: 0 }}>
                   <div style={{ padding: '25px', borderBottom: `2px solid ${theme.border.default}` }}>
                     <h2 style={{ color: theme.text.primary, margin: 0, fontSize: '1.3em', fontWeight: '600' }}>Recent Test Results</h2>
                   </div>
@@ -4107,14 +4174,7 @@ const TestingModule = () => {
                 <button id="result-add-btn" onClick={openAddResultModal} style={{ display: 'none' }} />
 
                 {/* FILTER BAR */}
-                <div style={{ 
-                  backgroundColor: theme.bg.card,
-                  borderRadius: '28px',
-                  marginBottom: 25,
-                  boxShadow: `0 4px 15px ${isDarkMode ? 'rgba(0,0,0,0.3)' : 'rgba(0,0,0,0.1)'}`,
-                  border: `1px solid ${theme.border.default}`,
-                  overflow: 'hidden'
-                }}>
+                <div className="panel" style={{ overflow: 'hidden', padding: 0, marginBottom: '25px' }}>
                   {/* Filter Header */}
                   <div style={{ 
                     background: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)',
@@ -4537,254 +4597,114 @@ const TestingModule = () => {
                 </div>
 
                 {/* Filtered Charts Section */}
-                {filteredResults.length > 0 && (
-                  <div style={{ display: 'grid', gridTemplateColumns: dashboardTwoCol, gap: '20px', marginBottom: '30px' }}>
-                    {/* Pass/Fail Pie Chart */}
-                    <div style={{
-                      backgroundColor: theme.bg.card,
-                      borderRadius: '28px',
-                      overflow: 'hidden',
-                      boxShadow: `0 4px 15px ${isDarkMode ? 'rgba(0,0,0,0.3)' : 'rgba(0,0,0,0.1)'}`,
-                      border: `1px solid ${theme.border.default}`,
-                      padding: '25px'
-                    }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px' }}>
-                        <TrendingUp size={24} color={theme.text.primary} />
-                        <h3 style={{ margin: 0, color: theme.text.primary, fontSize: '1.2em', fontWeight: '600' }}>Pass/Fail Distribution</h3>
-                      </div>
-                      <ResponsiveContainer width="100%" height={300}>
-                        <PieChart>
-                          <defs>
-                            <linearGradient id="resultsPassGradient" x1="0" y1="0" x2="0" y2="1">
-                              <stop offset="0%" stopColor="#2ecc71" />
-                              <stop offset="100%" stopColor="#27ae60" />
-                            </linearGradient>
-                            <linearGradient id="resultsFailGradient" x1="0" y1="0" x2="0" y2="1">
-                              <stop offset="0%" stopColor="#e74c3c" />
-                              <stop offset="100%" stopColor="#c0392b" />
-                            </linearGradient>
-                          </defs>
-                          <Pie
-                            data={[
-                              { name: 'Passed', value: passedTests, color: 'url(#resultsPassGradient)' },
-                              { name: 'Failed', value: failedTests, color: 'url(#resultsFailGradient)' }
-                            ]}
-                            cx="50%"
-                            cy="50%"
-                            labelLine={false}
-                            label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}
-                            outerRadius={100}
-                            fill="#8884d8"
-                            dataKey="value"
-                            stroke="none"
-                          >
-                            {[
-                              { name: 'Passed', value: passedTests, color: 'url(#resultsPassGradient)' },
-                              { name: 'Failed', value: failedTests, color: 'url(#resultsFailGradient)' }
-                            ].map((entry, index) => (
-                              <Cell key={`cell-${index}`} fill={entry.color} stroke="none" />
-                            ))}
-                          </Pie>
-                          <Tooltip
-                            contentStyle={{ backgroundColor: theme.bg.card, border: `1px solid ${theme.border.default}`, color: theme.text.primary }}
-                            itemStyle={{ color: theme.text.primary }}
-                            labelStyle={{ color: theme.text.primary }}
-                          />
-                          <Legend wrapperStyle={{ color: theme.text.primary }} />
-                        </PieChart>
-                      </ResponsiveContainer>
-                    </div>
+                {(() => {
+                  const rfData = filteredResults;
+                  const fPassed = rfData.filter(r => isPass(r.STATUS)).length;
+                  const fFailed = rfData.length - fPassed;
 
-                    {/* Standards Performance Bar Chart */
-                    <div style={{
-                      backgroundColor: theme.bg.card,
-                      borderRadius: '28px',
-                      overflow: 'hidden',
-                      boxShadow: `0 4px 15px ${isDarkMode ? 'rgba(0,0,0,0.3)' : 'rgba(0,0,0,0.1)'}`,
-                      border: `1px solid ${theme.border.default}`,
-                      padding: '25px'
-                    }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px' }}>
-                        <Award size={24} color={theme.text.primary} />
-                        <h3 style={{ margin: 0, color: theme.text.primary, fontSize: '1.2em', fontWeight: '600' }}>Performance by Standard</h3>
-                      </div>
-                      <ResponsiveContainer width="100%" height={300}>
-                        <BarChart
-                          data={(() => {
-                            const standardStats = {};
-                            filteredResults.forEach(r => {
-                              const std = norm(r.STANDARD);
-                              if (!standardStats[std]) {
-                                standardStats[std] = { standard: std, passed: 0, failed: 0, total: 0, sumScore: 0 };
-                              }
-                              standardStats[std].total++;
-                              standardStats[std].sumScore += toPctNumber(r.PERCENTAGE);
-                              if (isPass(r.STATUS)) standardStats[std].passed++;
-                              else standardStats[std].failed++;
-                            });
-                            return Object.values(standardStats).map(s => ({
-                              ...s,
-                              avgScore: (s.sumScore / s.total).toFixed(1),
-                              passRate: ((s.passed / s.total) * 100).toFixed(1)
-                            }));
-                          })()}
-                          margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
-                        >
-                          <defs>
-                            <linearGradient id="resultsBarPassGradient" x1="0" y1="0" x2="0" y2="1">
-                              <stop offset="0%" stopColor="#2ecc71" />
-                              <stop offset="100%" stopColor="#27ae60" />
-                            </linearGradient>
-                            <linearGradient id="resultsBarFailGradient" x1="0" y1="0" x2="0" y2="1">
-                              <stop offset="0%" stopColor="#e74c3c" />
-                              <stop offset="100%" stopColor="#c0392b" />
-                            </linearGradient>
-                          </defs>
-                          <CartesianGrid strokeDasharray="3 3" stroke={theme.border.default} />
-                          <XAxis dataKey="standard" tick={{ fill: theme.text.primary }} />
-                          <YAxis tick={{ fill: theme.text.primary }} />
-                          <Tooltip
-                            contentStyle={{ backgroundColor: theme.bg.card, border: `1px solid ${theme.border.default}`, color: theme.text.primary }}
-                            itemStyle={{ color: theme.text.primary }}
-                            labelStyle={{ color: theme.text.primary }}
-                          />
-                          <Legend wrapperStyle={{ color: theme.text.primary }} />
-                          <Bar dataKey="passed" fill="url(#resultsBarPassGradient)" name="Passed" />
-                          <Bar dataKey="failed" fill="url(#resultsBarFailGradient)" name="Failed" />
-                        </BarChart>
-                      </ResponsiveContainer>
-                    </div>
+                  const fStdStats = {};
+                  rfData.forEach(r => {
+                    const std = norm(r.STANDARD);
+                    if (!fStdStats[std]) fStdStats[std] = { standard: std, passed: 0, failed: 0 };
+                    if (isPass(r.STATUS)) fStdStats[std].passed++; else fStdStats[std].failed++;
+                  });
+                  const fBarData = Object.values(fStdStats);
 
-                    /* Score Distribution */}
-                    <div style={{
-                      backgroundColor: theme.bg.card,
-                      borderRadius: '28px',
-                      overflow: 'hidden',
-                      boxShadow: `0 4px 15px ${isDarkMode ? 'rgba(0,0,0,0.3)' : 'rgba(0,0,0,0.1)'}`,
-                      border: `1px solid ${theme.border.default}`,
-                      padding: '25px'
-                    }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px' }}>
-                        <BarChart3 size={24} color={theme.text.primary} />
-                        <h3 style={{ margin: 0, color: theme.text.primary, fontSize: '1.2em', fontWeight: '600' }}>Score Distribution</h3>
-                      </div>
-                      <ResponsiveContainer width="100%" height={300}>
-                        <BarChart
-                          data={(() => {
-                            const ranges = {
-                              '0-40%': 0,
-                              '40-60%': 0,
-                              '60-80%': 0,
-                              '80-100%': 0
-                            };
-                            filteredResults.forEach(r => {
-                              const score = toPctNumber(r.PERCENTAGE);
-                              if (score < 40) ranges['0-40%']++;
-                              else if (score < 60) ranges['40-60%']++;
-                              else if (score < 80) ranges['60-80%']++;
-                              else ranges['80-100%']++;
-                            });
-                            return Object.entries(ranges).map(([range, count]) => ({
-                              range,
-                              count,
-                              fill: range === '0-40%' ? '#c0392b' : range === '40-60%' ? '#e67e22' : range === '60-80%' ? '#f39c12' : '#27ae60'
-                            }));
-                          })()}
-                          margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
-                        >
-                          <CartesianGrid strokeDasharray="3 3" stroke={theme.border.default} />
-                          <XAxis dataKey="range" tick={{ fill: theme.text.primary }} />
-                          <YAxis tick={{ fill: theme.text.primary }} />
-                          <Tooltip
-                            contentStyle={{ backgroundColor: theme.bg.card, border: `1px solid ${theme.border.default}`, color: theme.text.primary }}
-                            itemStyle={{ color: theme.text.primary }}
-                            labelStyle={{ color: theme.text.primary }}
-                          />
-                          <Legend 
-                            wrapperStyle={{ color: theme.text.primary }} 
-                            formatter={(value) => <span style={{ color: theme.text.primary }}>{value}</span>}
-                          />
-                          <Bar dataKey="count" name="Tests" fill={isDarkMode ? '#ffffff' : '#1a1a2e'} >
-                            {(() => {
-                              const ranges = {
-                                '0-40%': 0,
-                                '40-60%': 0,
-                                '60-80%': 0,
-                                '80-100%': 0
-                              };
-                              filteredResults.forEach(r => {
-                                const score = toPctNumber(r.PERCENTAGE);
-                                if (score < 40) ranges['0-40%']++;
-                                else if (score < 60) ranges['40-60%']++;
-                                else if (score < 80) ranges['60-80%']++;
-                                else ranges['80-100%']++;
-                              });
-                              return Object.entries(ranges).map(([range, count], index) => (
-                                <Cell 
-                                  key={`cell-${index}`} 
-                                  fill={range === '0-40%' ? '#c0392b' : range === '40-60%' ? '#e67e22' : range === '60-80%' ? '#f39c12' : '#27ae60'}
-                                />
-                              ));
-                            })()}
-                          </Bar>
-                        </BarChart>
-                      </ResponsiveContainer>
-                    </div>
+                  const fRanges = { '0-40%': 0, '40-60%': 0, '60-80%': 0, '80-100%': 0 };
+                  rfData.forEach(r => {
+                    const score = toPctNumber(r.PERCENTAGE);
+                    if (score < 40) fRanges['0-40%']++;
+                    else if (score < 60) fRanges['40-60%']++;
+                    else if (score < 80) fRanges['60-80%']++;
+                    else fRanges['80-100%']++;
+                  });
+                  const fHistData = Object.entries(fRanges).map(([range, count]) => ({ range, count }));
 
-                    {/* Performance Trend */}
-                    <div style={{
-                      backgroundColor: theme.bg.card,
-                      borderRadius: '28px',
-                      overflow: 'hidden',
-                      boxShadow: `0 4px 15px ${isDarkMode ? 'rgba(0,0,0,0.3)' : 'rgba(0,0,0,0.1)'}`,
-                      border: `1px solid ${theme.border.default}`,
-                      padding: '25px'
-                    }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px' }}>
-                        <TrendingUp size={24} color={theme.text.primary} />
-                        <h3 style={{ margin: 0, color: theme.text.primary, fontSize: '1.2em', fontWeight: '600' }}>Performance Trend</h3>
+                  const fAreaData = rfData.slice(-20).map((r, idx) => ({
+                    test: `T${idx + 1}`,
+                    score: toPctNumber(r.PERCENTAGE)
+                  }));
+
+                  return (
+                    <div style={{ display: 'grid', gridTemplateColumns: chartGrid, gap: 24, marginBottom: 24 }}>
+                      <div className="panel" style={{ padding: 28 }}>
+                        <h3 style={{ margin: '0 0 20px', color: theme.text.primary }}>Pass / Fail Distribution</h3>
+                        {rfData.length === 0 ? <p style={chartEmptyStyle}>No data available</p> : (
+                          <ResponsiveContainer width="100%" height={280}>
+                            <PieChart>
+                              <Pie data={[{ name: 'Passed', value: fPassed }, { name: 'Failed', value: fFailed }]} cx="50%" cy="50%" innerRadius={70} outerRadius={110} paddingAngle={2} dataKey="value">
+                                <Cell fill="#27ae60" />
+                                <Cell fill="#d7263d" />
+                              </Pie>
+                              <Tooltip contentStyle={ttStyle} />
+                              <Legend />
+                            </PieChart>
+                          </ResponsiveContainer>
+                        )}
                       </div>
-                      <ResponsiveContainer width="100%" height={300}>
-                        <LineChart
-                          data={filteredResults.slice(-20).map((r, idx) => ({
-                            test: `Test ${idx + 1}`,
-                            score: toPctNumber(r.PERCENTAGE),
-                            name: norm(r.NAME)
-                          }))}
-                          margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
-                        >
-                          <CartesianGrid strokeDasharray="3 3" stroke={theme.border.default} />
-                          <XAxis dataKey="test" tick={{ fill: theme.text.primary }} />
-                          <YAxis domain={[0, 100]} tick={{ fill: theme.text.primary }} />
-                          <Tooltip
-                            contentStyle={{ backgroundColor: theme.bg.card, border: `1px solid ${theme.border.default}`, color: theme.text.primary }}
-                            itemStyle={{ color: theme.text.primary }}
-                            labelStyle={{ color: theme.text.primary }}
-                          />
-                          <Legend wrapperStyle={{ color: theme.text.primary }} />
-                          <Line 
-                            type="monotone" 
-                            dataKey="score" 
-                            stroke={isDarkMode ? '#ffffff' : '#1a1a2e'} 
-                            strokeWidth={2}
-                            name="Score (%)"
-                            dot={{ fill: isDarkMode ? '#ffffff' : '#1a1a2e', r: 4 }}
-                            activeDot={{ r: 6 }}
-                          />
-                        </LineChart>
-                      </ResponsiveContainer>
+
+                      <div className="panel" style={{ padding: 28 }}>
+                        <h3 style={{ margin: '0 0 20px', color: theme.text.primary }}>Performance by Standard</h3>
+                        {rfData.length === 0 ? <p style={chartEmptyStyle}>No data available</p> : (
+                          <ResponsiveContainer width="100%" height={280}>
+                            <BarChart data={fBarData} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
+                              <CartesianGrid vertical={false} stroke={chartGridStroke} />
+                              <XAxis dataKey="standard" {...axStyle} />
+                              <YAxis {...axStyle} />
+                              <Tooltip contentStyle={ttStyle} />
+                              <Legend />
+                              <Bar dataKey="passed" fill="#27ae60" name="Passed" radius={[6, 6, 0, 0]} />
+                              <Bar dataKey="failed" fill="#d7263d" name="Failed" radius={[6, 6, 0, 0]} />
+                            </BarChart>
+                          </ResponsiveContainer>
+                        )}
+                      </div>
+
+                      <div className="panel" style={{ padding: 28 }}>
+                        <h3 style={{ margin: '0 0 20px', color: theme.text.primary }}>Score Distribution</h3>
+                        {rfData.length === 0 ? <p style={chartEmptyStyle}>No data available</p> : (
+                          <ResponsiveContainer width="100%" height={280}>
+                            <BarChart data={fHistData} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
+                              <CartesianGrid vertical={false} stroke={chartGridStroke} />
+                              <XAxis dataKey="range" {...axStyle} />
+                              <YAxis {...axStyle} />
+                              <Tooltip contentStyle={ttStyle} />
+                              <Bar dataKey="count" name="Tests" radius={[6, 6, 0, 0]}>
+                                {fHistData.map((entry, index) => (
+                                  <Cell key={index} fill={entry.range === '0-40%' ? '#d7263d' : entry.range === '40-60%' ? '#e67e22' : entry.range === '60-80%' ? '#f5a623' : '#27ae60'} />
+                                ))}
+                              </Bar>
+                            </BarChart>
+                          </ResponsiveContainer>
+                        )}
+                      </div>
+
+                      <div className="panel" style={{ padding: 28 }}>
+                        <h3 style={{ margin: '0 0 20px', color: theme.text.primary }}>Performance Trend (Latest 20)</h3>
+                        {rfData.length === 0 ? <p style={chartEmptyStyle}>No data available</p> : (
+                          <ResponsiveContainer width="100%" height={280}>
+                            <AreaChart data={fAreaData} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
+                              <defs>
+                                <linearGradient id="resultsAreaScoreGradient" x1="0" y1="0" x2="0" y2="1">
+                                  <stop offset="0%" stopColor="#d7263d" stopOpacity={0.35} />
+                                  <stop offset="100%" stopColor="#d7263d" stopOpacity={0} />
+                                </linearGradient>
+                              </defs>
+                              <CartesianGrid vertical={false} stroke={chartGridStroke} />
+                              <XAxis dataKey="test" {...axStyle} />
+                              <YAxis domain={[0, 100]} {...axStyle} />
+                              <Tooltip contentStyle={ttStyle} />
+                              <Area type="monotone" dataKey="score" stroke="#d7263d" fill="url(#resultsAreaScoreGradient)" strokeWidth={2} name="Score (%)" />
+                            </AreaChart>
+                          </ResponsiveContainer>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                )}
+                  );
+                })()}
 
                 {/* Results Table */}
-                <div style={{
-                  backgroundColor: theme.bg.card,
-                  borderRadius: '28px',
-                  overflow: 'hidden',
-                  boxShadow: `0 4px 15px ${isDarkMode ? 'rgba(0,0,0,0.3)' : 'rgba(0,0,0,0.1)'}`,
-                  border: `1px solid ${theme.border.default}`
-                }}>
+                <div className="panel" style={{ overflow: 'hidden', padding: 0 }}>
                   <div style={{ 
                     padding: '25px', 
                     borderBottom: '3px solid #c0392b', 
@@ -5358,9 +5278,27 @@ const TestingModule = () => {
                           <select
                             value={resultFormData.standard}
                             disabled={resultEditMode}
-                            onChange={(e) => {
+                            onChange={async (e) => {
+                              const newStandard = e.target.value;
                               setIsResultPercentageManuallyEdited(false);
-                              setResultFormData({ ...resultFormData, standard: e.target.value });
+                              setResultFormData(prev => ({ ...prev, standard: newStandard }));
+
+                              // Auto-fill Total Questions + Passing Criteria from the
+                              // selected standard's config - still editable afterwards.
+                              if (!newStandard) return;
+                              try {
+                                const info = await fetchData(`/info?standard=${encodeURIComponent(newStandard)}`);
+                                if (info && !Array.isArray(info)) {
+                                  setResultFormData(prev => ({
+                                    ...prev,
+                                    standard: newStandard,
+                                    totalQuestions: info.Total_Questions != null ? String(info.Total_Questions) : prev.totalQuestions,
+                                    passingCriteria: info.Passing_Criteria != null ? String(info.Passing_Criteria).replace('%', '') : prev.passingCriteria
+                                  }));
+                                }
+                              } catch (err) {
+                                console.warn('Failed to auto-fill standard info:', err);
+                              }
                             }}
                             required
                             style={{
@@ -6391,14 +6329,7 @@ const TestingModule = () => {
     return (
       <div style={{ padding: isMobile ? '16px 12px' : '30px' }}>
         {/* Header Section with Filters */}
-        <div style={{
-          backgroundColor: theme.bg.card,
-          borderRadius: '28px',
-          overflow: 'hidden',
-          boxShadow: `0 4px 15px ${isDarkMode ? 'rgba(0,0,0,0.3)' : 'rgba(0,0,0,0.1)'}`,
-          border: `1px solid ${theme.border.default}`,
-          marginBottom: '25px'
-        }}>
+        <div className="panel" style={{ overflow: 'hidden', padding: 0, marginBottom: '25px' }}>
           {/* Header */}
           <div style={{ 
             background: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)',
@@ -7768,14 +7699,7 @@ const TestingModule = () => {
           )}
 
           {/* Search/Filter Card */}
-          <div style={{
-            backgroundColor: theme.bg.card,
-            borderRadius: '28px',
-            overflow: 'hidden',
-            boxShadow: `0 4px 15px ${isDarkMode ? 'rgba(0,0,0,0.3)' : 'rgba(0,0,0,0.1)'}`,
-            border: `1px solid ${theme.border.default}`,
-            marginBottom: '25px'
-          }}>
+          <div className="panel" style={{ overflow: 'hidden', padding: 0, marginBottom: '25px' }}>
             {/* Header */}
             <div style={{ 
               background: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)',

@@ -214,19 +214,26 @@ async function generateCertificate({
   standard,
   percentage,
   passing_criteria,
-  // For 2-row certificates (PT/MPT General+Specific)
+  // For 2-row certificates (PT/MPT)
   is_combined = false,
   general_data = null,
   specific_data = null,
-  // For 3-row combined OR 2-row single+practical
+  // For 3-row certificates (PT/MPT with Practical)
   practical_data = null,
-  // For single-standard + practical (double-row, uses single template)
-  has_practical = false,
+  // For SINGLE-type standards that require a practical (single theory row +
+  // practical row = 2-row certificate). Independent of the General/Specific
+  // (3-row) flow above; uses its own positions defined below.
+  is_single_with_practical = false,
   // Certification type
   certification_type = 'New',
   previous_certificate_no = null,
   // Custom template override
-  certificate_template = null
+  certificate_template = null,
+  // Manually-entered Vision Examination values (MT/MPT 3-row layout only)
+  vision_data = null,
+  // Passport-size photo to embed (top-right corner)
+  photo_buffer = null,
+  photo_mime = null
 }) {
   try {
     // Ensure generated directory exists
@@ -239,9 +246,11 @@ async function generateCertificate({
       const lowered = String(value || '').toLowerCase();
       return lowered.includes('general') || lowered.includes('specific') || lowered.includes('practical');
     };
-    // has_practical uses the single-row template — don't redirect it to the MPT/combined template
+    // A single-type standard with a practical keeps its OWN template (custom or
+    // default) — it must not fall into the General/Specific (MPT) layout even
+    // though its practical_data.standard contains the word "Practical".
     const useGeneralSpecificTemplate =
-      !has_practical && (
+      !is_single_with_practical && (
         (is_combined && general_data && specific_data) ||
         hasGeneralSpecificTag(standard) ||
         hasGeneralSpecificTag(general_data && general_data.standard) ||
@@ -351,10 +360,9 @@ async function generateCertificate({
     const certTag = getCertificateTag(certTagTemplatePath, certTagTemplateType);
     const certificateNumber = `${emp_id}/PTIS/${certTag}/${certYear}`;
     
-    // Keep exactly one "Mr." prefix before the employee name
-    const cleanedName = String(emp_name || '').replace(/^Mr\.?\s*/i, '').trim();
-    const displayName = cleanedName ? `Mr. ${cleanedName}` : 'Mr.';
-    
+    // No Mr./Mrs./Ms. prefix - just the plain employee name
+    const displayName = String(emp_name || '').replace(/^(Mr|Mrs|Ms)\.?\s*/i, '').trim();
+
     // Draw employee name (above "For" - centered, Cambria and non-italic)
     let nameSize = 24;
     let nameWidth = certificateNameFont.widthOfTextAtSize(displayName, nameSize);
@@ -364,7 +372,27 @@ async function generateCertificate({
       nameWidth = certificateNameFont.widthOfTextAtSize(displayName, nameSize);
     }
     const nameX = (width - nameWidth) / 2;
-    const nameY = height * 0.70; // Slightly higher to create gap with "For"
+
+    // The name + ID block sits between "Certificate of Accomplishment
+    // Awarded to" and "For", centered so top/bottom padding matches - but
+    // those two lines sit at different Y per template artwork, so each
+    // calibrated template gets its own entry here. Falls back to the MPT
+    // calibration for any template not yet measured.
+    const NAME_ID_POSITIONS = {
+      'MPT': { nameY: 434, empIdY: 404 },               // Awarded to y=464, For y=379
+      'API_RP': { nameY: 416, empIdY: 385 },             // Awarded to y=446, For y=359
+      'API_RP_7G-2': { nameY: 416, empIdY: 385 }         // Awarded to y=446, For y=359
+    };
+    const templateBaseName = path.parse(templatePath).name;
+    const namePos = NAME_ID_POSITIONS[templateBaseName] || NAME_ID_POSITIONS['MPT'];
+    const nameY = namePos.nameY;
+
+    // Employee ID - bold line below the name.
+    const empIdSize = 14;
+    const empIdText = `EMP ID: ${emp_id}`;
+    const empIdWidth = timesRomanBold.widthOfTextAtSize(empIdText, empIdSize);
+    const empIdX = (width - empIdWidth) / 2;
+    const empIdY = namePos.empIdY;
 
     const formatExamStandardLabel = (value) => {
       const raw = String(value || '').trim();
@@ -383,22 +411,32 @@ async function generateCertificate({
       font: certificateNameFont,
       color: rgb(0, 0, 0)
     });
-    
+
+    firstPage.drawText(empIdText, {
+      x: empIdX,
+      y: empIdY,
+      size: empIdSize,
+      font: timesRomanBold,
+      color: rgb(0, 0, 0)
+    });
+
+    // Check if this is a 2-row or 3-row certificate (PT/MPT with General + Specific + optional Practical)
     if (is_combined && general_data && specific_data) {
-      // ─────────────────────────────────────────────────────────────────
-      // 3-ROW layout  (PT/MPT: General + Specific + optional Practical)
-      // Adjust ONLY these constants — does NOT affect 2-row single below
-      // ─────────────────────────────────────────────────────────────────
-      const col1Center = 182;   // Column 1: Standard label  (x center)
-      const col2Center = 412;   // Column 2: Score %          (x center)
-      const col3Center = 650;   // Column 3: Passing criteria (x center)
-      // ─────────────────────────────────────────────────────────────────
+      // Column center positions - measured off the MPT.pdf artwork's
+      // "Examination / Achieved Percentage / Passing Criteria" header
+      // (the table was narrowed to make room for the Vision Examination
+      // table on the right).
+      const col1Center = 170;
+      const col2Center = 320;
+      const col3Center = 444;
 
       if (practical_data) {
-        // 3-row table (General + Specific + Practical)
-        const tableY1 = height * 0.38 + 6;  // Row 1: General   — increase to move UP
-        const tableY2 = height * 0.38 - 9;  // Row 2: Specific
-        const tableY3 = height * 0.38 - 24; // Row 3: Practical  — decrease to move DOWN
+        // 4-row table (General + Specific + Practical + Average). Row
+        // Y-positions are measured directly off the template's row grid
+        // (same grid the Vision Examination table's 4 rows use).
+        const tableY1 = 258; // First row (General)
+        const tableY2 = 243; // Second row (Specific)
+        const tableY3 = 228;  // Third row (Practical)
         
         // Row 1 - General
         const gen_standardText = formatExamStandardLabel(general_data.standard);
@@ -504,8 +542,83 @@ async function generateCertificate({
             color: rgb(0, 0, 0)
           });
         }
-      } 
-      /* COMMENTED OUT - 2-row table 
+
+        // Row 4 - Average (General + Specific + Practical achieved %)
+        const tableY4 = 213; // same row grid, aligned with the Vision "Education" row
+        const avgInputs = [general_data.percentage, specific_data.percentage, practical_data.percentage]
+          .map((v) => parseFloat(v))
+          .filter((v) => !isNaN(v));
+
+        const avg_standardText = 'Average';
+        const avg_standardWidth = certificateTableFont.widthOfTextAtSize(avg_standardText, 11);
+        firstPage.drawText(avg_standardText, {
+          x: col1Center - (avg_standardWidth / 2),
+          y: tableY4,
+          size: 11,
+          font: certificateTableFont,
+          color: rgb(0, 0, 0)
+        });
+
+        if (avgInputs.length > 0) {
+          const avgValue = avgInputs.reduce((sum, v) => sum + v, 0) / avgInputs.length;
+          const avg_achievedText = `${avgValue.toFixed(2)}%`;
+          const avg_achievedWidth = certificateTableFont.widthOfTextAtSize(avg_achievedText, 11);
+          firstPage.drawText(avg_achievedText, {
+            x: col2Center - (avg_achievedWidth / 2),
+            y: tableY4,
+            size: 11,
+            font: certificateTableFont,
+            color: rgb(0, 0, 0)
+          });
+        }
+
+        // Fixed overall passing criteria for the Average row
+        const avg_criteriaText = '75%';
+        const avg_criteriaWidth = certificateTableFont.widthOfTextAtSize(avg_criteriaText, 11);
+        firstPage.drawText(avg_criteriaText, {
+          x: col3Center - (avg_criteriaWidth / 2),
+          y: tableY4,
+          size: 11,
+          font: certificateTableFont,
+          color: rgb(0, 0, 0)
+        });
+
+        // Vision Examination table (right side of the page) - values are
+        // manually entered by the admin, not derived from test data.
+        // Row Y-positions measured directly off the "Near Vision" / "Color
+        // Vision" / "Training Hours" / "Education" labels baked into the
+        // artwork; the value sits in the empty cell to their right.
+        if (vision_data) {
+          // Center of the value column - matches where "Near Vision"'s value
+          // (e.g. "OK") already sits correctly; all rows expand left/right
+          // from this same center so different text lengths stay aligned.
+          const VISION_COL_CENTER = 667;
+          const VISION_ROW_Y_1 = 258;   // Near Vision
+          const VISION_ROW_Y_2 = 243;   // Color Vision
+          const VISION_ROW_Y_3 = 228;  // Training Hours
+          const VISION_ROW_Y_4 = 213;  // Education
+          const VISION_FONT_SIZE = 10;
+
+          const drawVisionValue = (text, y) => {
+            const trimmed = String(text || '').trim();
+            if (!trimmed) return;
+            const textWidth = certificateTableFont.widthOfTextAtSize(trimmed, VISION_FONT_SIZE);
+            firstPage.drawText(trimmed, {
+              x: VISION_COL_CENTER - (textWidth / 2),
+              y,
+              size: VISION_FONT_SIZE,
+              font: certificateTableFont,
+              color: rgb(0, 0, 0)
+            });
+          };
+
+          drawVisionValue(vision_data.near_vision, VISION_ROW_Y_1);
+          drawVisionValue(vision_data.color_vision, VISION_ROW_Y_2);
+          drawVisionValue(vision_data.training_hours, VISION_ROW_Y_3);
+          drawVisionValue(vision_data.education, VISION_ROW_Y_4);
+        }
+      }
+      /* COMMENTED OUT - 2-row table
       else {
         // 2-row table (General + Specific only)
         const tableY1 = height * 0.38 + 25; // First row (General)
@@ -582,94 +695,71 @@ async function generateCertificate({
         }
       }
       */
-    } else if (has_practical && practical_data) {
-      // ─────────────────────────────────────────────────────────────────
-      // DOUBLE-ROW layout  (single standard + practical)
-      // Adjust ONLY these constants — does NOT affect 3-row combined above
-      // ─────────────────────────────────────────────────────────────────
-      const col1Center = 184;   // Column 1: Standard label  (x center)
-      const col2Center = 412;   // Column 2: Score %          (x center)
-      const col3Center = 650;   // Column 3: Passing criteria (x center)
-      const tableY1 = height * 0.38 + 58; // Theory row    — increase to move UP
-      const tableY2 = height * 0.38 + 42; // Practical row — decrease to move DOWN
-      // ─────────────────────────────────────────────────────────────────
+    } else if (is_single_with_practical && practical_data) {
+      /* ================================================================ */
+      /* SINGLE-STANDARD + PRACTICAL (2-row) certificate layout.          */
+      /* Row 1 = theory (the single standard), Row 2 = practical.         */
+      /* These positions are defined HERE on their own so they can be     */
+      /* adjusted without disturbing the single-row or 3-row layouts.     */
+      /* ================================================================ */
+      const SP_COL1_CENTER = 181;   // Standard / exam-name column center
+      const SP_COL2_CENTER = 412;   // Achieved (%) column center
+      const SP_COL3_CENTER = 650;   // Passing criteria (%) column center
+      const SP_FONT_SIZE = 11;      // Row text size
+      // Row Y-positions measured directly off the "Standard / Achieved
+      // Percentage / Passing Criteria" header (y=266) baked into the
+      // API_RP.pdf artwork.
+      const SP_THEORY_ROW_Y = 251;    // Row 1 (theory) baseline
+      const SP_PRACTICAL_ROW_Y = 236; // Row 2 (practical) baseline
 
-      // Row 1 — Theory
-      const theoryText = 'Theory';
-      const theoryWidth = certificateTableFont.widthOfTextAtSize(theoryText, 11);
-      firstPage.drawText(theoryText, {
-        x: col1Center - (theoryWidth / 2),
-        y: tableY1,
-        size: 11,
-        font: certificateTableFont,
-        color: rgb(0, 0, 0)
-      });
-
-      if (percentage && !isNaN(percentage)) {
-        const pctText = `${percentage}%`;
-        const pctWidth = certificateTableFont.widthOfTextAtSize(pctText, 11);
-        firstPage.drawText(pctText, {
-          x: col2Center - (pctWidth / 2),
-          y: tableY1,
-          size: 11,
+      const drawSinglePracticalRow = (rowY, label, pct, criteria) => {
+        const labelWidth = certificateTableFont.widthOfTextAtSize(label, SP_FONT_SIZE);
+        firstPage.drawText(label, {
+          x: SP_COL1_CENTER - (labelWidth / 2),
+          y: rowY,
+          size: SP_FONT_SIZE,
           font: certificateTableFont,
           color: rgb(0, 0, 0)
         });
-      }
 
-      if (passing_criteria && !isNaN(passing_criteria)) {
-        const critText = `${passing_criteria}%`;
-        const critWidth = certificateTableFont.widthOfTextAtSize(critText, 11);
-        firstPage.drawText(critText, {
-          x: col3Center - (critWidth / 2),
-          y: tableY1,
-          size: 11,
-          font: certificateTableFont,
-          color: rgb(0, 0, 0)
-        });
-      }
+        if (pct != null && !isNaN(pct)) {
+          const achievedText = `${pct}%`;
+          const achievedWidth = certificateTableFont.widthOfTextAtSize(achievedText, SP_FONT_SIZE);
+          firstPage.drawText(achievedText, {
+            x: SP_COL2_CENTER - (achievedWidth / 2),
+            y: rowY,
+            size: SP_FONT_SIZE,
+            font: certificateTableFont,
+            color: rgb(0, 0, 0)
+          });
+        }
 
-      // Row 2 — Practical
-      const practicalLabel = formatExamStandardLabel(practical_data.standard);
-      const practicalLabelWidth = certificateTableFont.widthOfTextAtSize(practicalLabel, 11);
-      firstPage.drawText(practicalLabel, {
-        x: col1Center - (practicalLabelWidth / 2),
-        y: tableY2,
-        size: 11,
-        font: certificateTableFont,
-        color: rgb(0, 0, 0)
-      });
+        if (criteria != null && !isNaN(criteria)) {
+          const criteriaText = `${criteria}%`;
+          const criteriaWidth = certificateTableFont.widthOfTextAtSize(criteriaText, SP_FONT_SIZE);
+          firstPage.drawText(criteriaText, {
+            x: SP_COL3_CENTER - (criteriaWidth / 2),
+            y: rowY,
+            size: SP_FONT_SIZE,
+            font: certificateTableFont,
+            color: rgb(0, 0, 0)
+          });
+        }
+      };
 
-      if (practical_data.percentage && !isNaN(practical_data.percentage)) {
-        const pPctText = `${practical_data.percentage}%`;
-        const pPctWidth = certificateTableFont.widthOfTextAtSize(pPctText, 11);
-        firstPage.drawText(pPctText, {
-          x: col2Center - (pPctWidth / 2),
-          y: tableY2,
-          size: 11,
-          font: certificateTableFont,
-          color: rgb(0, 0, 0)
-        });
-      }
-
-      if (practical_data.passing_criteria && !isNaN(practical_data.passing_criteria)) {
-        const pCritText = `${practical_data.passing_criteria}%`;
-        const pCritWidth = certificateTableFont.widthOfTextAtSize(pCritText, 11);
-        firstPage.drawText(pCritText, {
-          x: col3Center - (pCritWidth / 2),
-          y: tableY2,
-          size: 11,
-          font: certificateTableFont,
-          color: rgb(0, 0, 0)
-        });
-      }
+      // Row 1 — theory result. The Standard column always reads "Theory".
+      drawSinglePracticalRow(SP_THEORY_ROW_Y, 'Theory', percentage, passing_criteria);
+      // Row 2 — practical result. The Standard column always reads "Practical".
+      drawSinglePracticalRow(SP_PRACTICAL_ROW_Y, 'Practical', practical_data.percentage, practical_data.passing_criteria);
     } else {
-      // Single row table (existing logic) - keep at original position
-      const tableY = height * 0.38 + 57;
-      const col1Center = 177;
+      // Single row table - Y measured directly off the "Standard / Achieved
+      // Percentage / Passing Criteria" header (y=266) baked into the
+      // API_RP_7G-2.pdf artwork.
+      const tableY = 251;
+      const col1Center = 181;
       const col2Center = 412;
       const col3Center = 650;
-
+      
       const standardText = standard;
       const standardWidth = certificateTableFont.widthOfTextAtSize(standardText, 9);
       firstPage.drawText(standardText, {
@@ -679,7 +769,7 @@ async function generateCertificate({
         font: certificateTableFont,
         color: rgb(0, 0, 0)
       });
-
+      
       if (percentage && !isNaN(percentage)) {
         const achievedText = `${percentage}%`;
         const achievedWidth = certificateTableFont.widthOfTextAtSize(achievedText, 9);
@@ -691,7 +781,7 @@ async function generateCertificate({
           color: rgb(0, 0, 0)
         });
       }
-
+      
       if (passing_criteria && !isNaN(passing_criteria)) {
         const criteriaText = `${passing_criteria}%`;
         const criteriaWidth = certificateTableFont.widthOfTextAtSize(criteriaText, 9);
@@ -709,8 +799,8 @@ async function generateCertificate({
     if (layoutTemplateType === 'PT' || layoutTemplateType === 'MT' || layoutTemplateType === 'UT' || layoutTemplateType === 'VT') {
       // Certificate number
       firstPage.drawText(certificateNumber, {
-        x: 189,
-        y: 60,
+        x: 200,
+        y: 58,
         size: 13,
         font: timesRomanFont,
         color: rgb(0, 0, 0)
@@ -751,33 +841,77 @@ async function generateCertificate({
       
       // Examiner DATE (bottom right corner)
       firstPage.drawText(formattedDate, {
-        x: 671,
-        y: 60,
+        x: 675,
+        y: 58,
         size: 13,
         font: timesRomanFont,
         color: rgb(0, 0, 0)
       });
     } else {
-      // Standard templates (existing logic)
+      // Standard templates - Y measured directly off the "CERTIFICATE NO:" /
+      // "DATE:" labels (both at y=96) baked into the API_RP.pdf /
+      // API_RP_7G-2.pdf artwork.
       const certNumSize = 13;
       firstPage.drawText(certificateNumber, {
-        x: 188,
-        y: 129,
+        x: 194,
+        y: 96,
         size: certNumSize,
         font: timesRomanFont,
         color: rgb(0, 0, 0)
       });
-      
+
       const dateSize = 13;
       firstPage.drawText(formattedDate, {
-        x: 667,
-        y: 129,
+        x: 669,
+        y: 96,
         size: dateSize,
         font: timesRomanFont,
         color: rgb(0, 0, 0)
       });
     }
-    
+
+    // Passport-size photo (top-right corner). Skipped silently if none was
+    // uploaded. Coordinates are calibration-pending against the artwork.
+    if (photo_buffer) {
+      try {
+        const isPng = String(photo_mime || '').toLowerCase().includes('png');
+        const embeddedPhoto = isPng
+          ? await pdfDoc.embedPng(photo_buffer)
+          : await pdfDoc.embedJpg(photo_buffer);
+
+        const PHOTO_WIDTH = 105;
+        const PHOTO_HEIGHT = 110;
+        const PHOTO_X = width - PHOTO_WIDTH - 50;
+        // Default (MPT) Y sits just under the header. On API_RP, the photo's
+        // top edge lines up with the "STANDARD AWARENESS TRAINING PROGRAM"
+        // subtitle (y=475).
+        const PHOTO_Y_BY_TEMPLATE = {
+          'API_RP': 475 - PHOTO_HEIGHT,
+          'API_RP_7G-2': 475 - PHOTO_HEIGHT
+        };
+        const PHOTO_Y = PHOTO_Y_BY_TEMPLATE[templateBaseName] ?? (height - PHOTO_HEIGHT - 55);
+
+        firstPage.drawImage(embeddedPhoto, {
+          x: PHOTO_X,
+          y: PHOTO_Y,
+          width: PHOTO_WIDTH,
+          height: PHOTO_HEIGHT
+        });
+
+        // Border frame around the photo - applies to every template.
+        firstPage.drawRectangle({
+          x: PHOTO_X,
+          y: PHOTO_Y,
+          width: PHOTO_WIDTH,
+          height: PHOTO_HEIGHT,
+          borderColor: rgb(0, 0, 0),
+          borderWidth: 1.5
+        });
+      } catch (photoErr) {
+        console.warn('Certificate photo embed failed, continuing without it:', photoErr.message);
+      }
+    }
+
     // Save the modified PDF
     const pdfBytes = await pdfDoc.save();
     
