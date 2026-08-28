@@ -52,3 +52,11 @@ backend/certificates/generated/*.pdf
 # Database
 *.sqlite
 *.db
+
+# Fonts
+# backend/Fonts holds a full Windows font dump (~392 MB). The certificate
+# generator only ever loads Cambria for headings - everything else it uses
+# is a pdf-lib built-in - so track just those two faces, as the ERP portal does.
+backend/Fonts/*
+!backend/Fonts/cambriab.ttf
+!backend/Fonts/cambria.ttc
