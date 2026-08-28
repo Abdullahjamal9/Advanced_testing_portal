@@ -4014,9 +4014,9 @@ const TestingModule = () => {
                     {results.length === 0 ? <p style={chartEmptyStyle}>No data available</p> : (
                       <ResponsiveContainer width="100%" height={280}>
                         <PieChart>
-                          <Pie data={[{ name: 'Passed', value: passedTests }, { name: 'Failed', value: failedTests }]} cx="50%" cy="50%" innerRadius={70} outerRadius={110} paddingAngle={2} dataKey="value">
-                            <Cell fill="#27ae60" />
-                            <Cell fill="#d7263d" />
+                          <Pie data={[{ name: 'Passed', value: passedTests }, { name: 'Failed', value: failedTests }]} cx="50%" cy="50%" innerRadius={70} outerRadius={110} paddingAngle={2} dataKey="value" stroke="none">
+                            <Cell fill="#27ae60" stroke="none" />
+                            <Cell fill="#d7263d" stroke="none" />
                           </Pie>
                           <Tooltip contentStyle={ttStyle} />
                           <Legend />
@@ -4632,9 +4632,9 @@ const TestingModule = () => {
                         {rfData.length === 0 ? <p style={chartEmptyStyle}>No data available</p> : (
                           <ResponsiveContainer width="100%" height={280}>
                             <PieChart>
-                              <Pie data={[{ name: 'Passed', value: fPassed }, { name: 'Failed', value: fFailed }]} cx="50%" cy="50%" innerRadius={70} outerRadius={110} paddingAngle={2} dataKey="value">
-                                <Cell fill="#27ae60" />
-                                <Cell fill="#d7263d" />
+                              <Pie data={[{ name: 'Passed', value: fPassed }, { name: 'Failed', value: fFailed }]} cx="50%" cy="50%" innerRadius={70} outerRadius={110} paddingAngle={2} dataKey="value" stroke="none">
+                                <Cell fill="#27ae60" stroke="none" />
+                                <Cell fill="#d7263d" stroke="none" />
                               </Pie>
                               <Tooltip contentStyle={ttStyle} />
                               <Legend />
