@@ -12,23 +12,22 @@
   font-display: swap;
 }
 
-body {
-  margin: 0;
+/* One font for the whole portal. Setting this on body alone left gaps -
+ * form controls and some table cells don't pick up the inherited family -
+ * so it is applied universally. Inline styles still win, so anything that
+ * genuinely needs a different face can still override it. */
+*,
+*::before,
+*::after {
   font-family: 'Montserrat', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
     'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
     sans-serif;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
 }
 
-/* Form controls don't inherit the page font on their own, so without this
- * every input/select/button would stay on the browser default while the
- * rest of the UI switched to Montserrat. */
-input,
-select,
-textarea,
-button {
-  font-family: inherit;
+body {
+  margin: 0;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 html,
@@ -50,9 +49,11 @@ canvas {
   min-width: 0;
 }
 
-code {
-  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
-    monospace;
+/* Digits that change in place (timers, durations) keep a fixed advance
+ * width so the surrounding layout doesn't jitter, while still rendering
+ * in Montserrat. */
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
 }
 
 /* Global dropdown radius */

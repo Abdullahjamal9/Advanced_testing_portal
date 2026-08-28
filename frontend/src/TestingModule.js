@@ -1474,7 +1474,7 @@ const TestingModule = () => {
               </button>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#fff' }}>
                 <Clock size={20} />
-                <span style={{ fontFamily: 'monospace', fontSize: isMobile ? '1em' : '1.2em', fontWeight: 'bold' }}>
+                <span className="tabular-nums" style={{ fontSize: isMobile ? '1em' : '1.2em', fontWeight: 'bold' }}>
                   {formatTime(timeRemaining)}
                 </span>
               </div>

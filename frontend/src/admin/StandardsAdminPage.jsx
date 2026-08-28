@@ -577,7 +577,7 @@ overflow: 'hidden',
                         <td style={{ padding: '16px 20px', color: colors.text, fontWeight: '500' }}>
                           {info ? info.Passing_Criteria : 'N/A'}
                         </td>
-                        <td style={{ padding: '16px 20px', color: colors.textMuted, fontFamily: 'monospace', fontSize: '0.95em' }}>
+                        <td className="tabular-nums" style={{ padding: '16px 20px', color: colors.textMuted, fontSize: '0.95em' }}>
                           {info ? `${info.Hours}h ${info.Minutes}m ${info.Seconds}s` : 'N/A'}
                         </td>
                         <td style={{ padding: '16px 20px', textAlign: 'center' }}>
